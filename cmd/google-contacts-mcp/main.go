@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
+	"github.com/samber/google-contacts-mcp/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=<tag>".
@@ -59,7 +61,8 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		}
 		return 0
 	case config.CmdServe, config.CmdRekey, config.CmdDisconnect:
-		if _, err := config.Load(cmd, args, getenv); err != nil {
+		cfg, err := config.Load(cmd, args, getenv)
+		if err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				config.Usage(stdout)
 				return 0
@@ -67,11 +70,66 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 			_, _ = fmt.Fprintln(stderr, err)
 			return exitFailure
 		}
-		_, _ = fmt.Fprintf(stderr, "%s: not implemented\n", cmd)
-		return exitFailure
+		switch cmd {
+		case config.CmdRekey:
+			err = runRekey(context.Background(), cfg, stdout)
+		case config.CmdDisconnect:
+			err = runDisconnect(context.Background(), cfg, stdout)
+		default:
+			err = fmt.Errorf("%s: not implemented", cmd)
+		}
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return exitFailure
+		}
+		return 0
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command %q (want %s, %s, %s, %s or %s)\n",
 			cmd, config.CmdServe, cmdGenkey, config.CmdRekey, config.CmdDisconnect, cmdVersion)
 		return exitFailure
 	}
+}
+
+// openStore parses the keyring and opens the database named by cfg.
+func openStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
+	kr, err := crypto.ParseKeyring(cfg.EncryptionKeys)
+	if err != nil {
+		return nil, err
+	}
+	return store.Open(ctx, cfg.DBPath, kr)
+}
+
+// runRekey re-encrypts every stored secret under the active key.
+func runRekey(ctx context.Context, cfg config.Config, stdout io.Writer) (err error) {
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, st.Close()) }()
+	n, err := st.Rekey(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "re-encrypted %d rows\n", n)
+	return err
+}
+
+// runDisconnect deletes a user, found by e-mail or Google sub, with every
+// token stored for them.
+func runDisconnect(ctx context.Context, cfg config.Config, stdout io.Writer) (err error) {
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, st.Close()) }()
+	who := cfg.Args[0]
+	u, err := st.UserBySubOrEmail(ctx, who)
+	if err != nil {
+		return fmt.Errorf("disconnect %q: %w", who, err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		return fmt.Errorf("disconnect %q: %w", who, err)
+	}
+	_, err = fmt.Fprintf(stdout, "disconnected %s\n", u.ID)
+	return err
 }

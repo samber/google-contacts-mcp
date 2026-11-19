@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/samber/google-contacts-mcp/internal/crypto"
+	"github.com/samber/google-contacts-mcp/internal/store"
 )
 
 func noEnv(string) string { return "" }
@@ -45,22 +48,86 @@ func TestRun_StubsAndUnknown(t *testing.T) {
 	}
 }
 
-func TestRun_LoadsConfigBeforeStub(t *testing.T) {
-	env := func(key string) string {
-		return map[string]string{"GCMCP_ENCRYPTION_KEYS": "k1:AAAA"}[key]
+// storeEnv returns a getenv with a real generated key and a database in a temp dir.
+func storeEnv(t *testing.T) (getenv func(string) string, dbPath, keys string) {
+	t.Helper()
+	keys, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
 	}
+	dbPath = filepath.Join(t.TempDir(), "db.sqlite")
+	vars := map[string]string{
+		"GCMCP_ENCRYPTION_KEYS":      keys,
+		"GCMCP_DB_PATH":              dbPath,
+		"GCMCP_GOOGLE_CLIENT_ID":     "client-id",
+		"GCMCP_GOOGLE_CLIENT_SECRET": "client-secret",
+	}
+	return func(key string) string { return vars[key] }, dbPath, keys
+}
+
+func TestRun_Rekey(t *testing.T) {
+	env, _, _ := storeEnv(t)
 	var out, errOut bytes.Buffer
-	if code := run([]string{"rekey"}, env, &out, &errOut); code != exitFailure {
-		t.Fatalf("exit = %d", code)
+	if code := run([]string{"rekey"}, env, &out, &errOut); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut.String())
 	}
-	if got := errOut.String(); got != "rekey: not implemented\n" {
-		t.Errorf("stderr = %q, want not implemented after a valid config", got)
+	if got := out.String(); got != "re-encrypted 0 rows\n" {
+		t.Errorf("stdout = %q", got)
 	}
 
 	errOut.Reset()
 	run([]string{"serve", "stray"}, env, &out, &errOut)
 	if !strings.Contains(errOut.String(), "stray") {
 		t.Errorf("stderr = %q, want config error naming stray", errOut.String())
+	}
+}
+
+func TestRun_RekeyBadKeys(t *testing.T) {
+	env := func(key string) string {
+		return map[string]string{"GCMCP_ENCRYPTION_KEYS": "k1:AAAA", "GCMCP_DB_PATH": filepath.Join(t.TempDir(), "db")}[key]
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"rekey"}, env, &out, &errOut); code != exitFailure {
+		t.Fatalf("exit = %d, want %d", code, exitFailure)
+	}
+	if !strings.Contains(errOut.String(), "k1") || out.Len() != 0 {
+		t.Errorf("stdout = %q, stderr = %q; want key error naming k1", out.String(), errOut.String())
+	}
+}
+
+func TestRun_Disconnect(t *testing.T) {
+	ctx := context.Background()
+	env, dbPath, keys := storeEnv(t)
+	kr, err := crypto.ParseKeyring(keys)
+	if err != nil {
+		t.Fatalf("ParseKeyring: %v", err)
+	}
+	st, err := store.Open(ctx, dbPath, kr)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	u, err := st.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := run([]string{"disconnect", "A@example.com"}, env, &out, &errOut); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut.String())
+	}
+	if got, want := out.String(), "disconnected "+u.ID+"\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+
+	out.Reset()
+	if code := run([]string{"disconnect", "sub-1"}, env, &out, &errOut); code != exitFailure {
+		t.Errorf("second disconnect exit = %d, want %d", code, exitFailure)
+	}
+	if !strings.Contains(errOut.String(), "not found") || out.Len() != 0 {
+		t.Errorf("stdout = %q, stderr = %q; want not found", out.String(), errOut.String())
 	}
 }
 
