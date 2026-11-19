@@ -133,7 +133,7 @@ Advertise at least:
 - Confidential Web OAuth client. Redirect URI `<base-url>/oauth/google/callback`.
 - Google refresh and access tokens encrypted with AES-256-GCM, additional data = our user id.
 - `GCMCP_ENCRYPTION_KEYS` = comma-separated `keyid:base64(32 bytes)`; the first is active for new writes. Ciphertext carries the key id. `rekey` re-encrypts every row with the active key. Rotation: add new key first, restart, run `rekey`, remove old key.
-- Google access tokens are refreshed on demand. `invalid_grant` on refresh means the user revoked access or Testing mode expired: delete all rows for that user (which also kills our tokens) and return the tool error "Google access was revoked; reconnect this connector". A tool handler cannot change the HTTP status of a response already in flight, so the client's next MCP request gets 401 `invalid_token` and restarts the OAuth flow.
+- Google access tokens are refreshed on demand. A People API 401 drops the cached access token and forces one refresh through the per-user single flight; if that refresh succeeds, the call is retried once (Google applied nothing on the 401, so retrying writes is safe), and a second 401 returns "Google access was revoked; reconnect this connector" without deleting anything. `invalid_grant` on refresh means the user revoked access or Testing mode expired: delete all rows for that user (which also kills our tokens) and return the tool error "Google access was revoked; reconnect this connector". A tool handler cannot change the HTTP status of a response already in flight, so the client's next MCP request gets 401 `invalid_token` and restarts the OAuth flow. The data of a user who revoked access at Google is therefore deleted the next time they use the connector; the 180-day purge is the backstop for users who never return.
 - One Google grant per user, shared by all of that user's MCP clients. Each new connection (new consent) replaces the stored Google tokens with the newest ones.
 - `POST /oauth/revoke` from a client revokes only our tokens for that client. It never revokes at Google, so the user's other clients keep working.
 - `invalid_grant` therefore disconnects every client of that user; each must reconnect. Only `disconnect` (CLI) and the 180-day purge revoke at Google.
@@ -181,7 +181,7 @@ Known limit: search is eventually consistent after writes. Two upserts of the sa
 - Google 429, or our own rate limit: tool error "rate limited, retry after N s".
 - Google 404 on a resource name: "contact not found".
 - Google 5xx: tool error with Google's status; no automatic retry beyond one for idempotent reads.
-- Upstream token dead (`invalid_grant`): the user's rows are deleted and the tool error is "Google access was revoked; reconnect this connector"; the next MCP request gets HTTP 401 (section 7).
+- Upstream token dead (People API 401, then `invalid_grant` on the forced refresh): the user's rows are deleted and the tool error is "Google access was revoked; reconnect this connector"; the next MCP request gets HTTP 401 (section 7).
 
 ## 9. Rate limiting
 

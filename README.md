@@ -146,7 +146,7 @@ Your e-mail address is stored in clear, so the operator can find your account wh
 How to erase everything:
 
 - **Ask the operator.** The operator runs `google-contacts-mcp disconnect <your e-mail>`. It revokes the grant at Google and deletes every row about you.
-- **Revoke access yourself** at [myaccount.google.com/permissions](https://myaccount.google.com/permissions). The next time the server uses your grant, Google refuses it, and the server deletes your data.
+- **Revoke access yourself** at [myaccount.google.com/permissions](https://myaccount.google.com/permissions). Your data is deleted the next time you use the connector after revoking: Google refuses the grant, and the server deletes every row about you. If you never use it again, the 180-day purge below removes it.
 - **Stop using it.** Accounts unused for 180 days are purged automatically, and their Google grant is revoked.
 
 Disconnecting one assistant from its own settings only revokes the tokens this server issued to that assistant. Your Google grant stays in place for your other assistants. Deleted data can remain in database backups until they expire under the operator's retention policy; Google tokens stay encrypted there too.
@@ -270,7 +270,7 @@ ChatGPT also offers scheduled tasks, but whether they can call custom apps such 
 - **Search lags behind writes.** Google's contact search index updates a few minutes after a write. A contact created or changed just now may not show up in `search_contacts` yet, and two `upsert_contact_by_email` calls for the same new address within minutes can create two contacts. The sync prompt above avoids this by grouping senders by e-mail address before upserting.
 - **Testing mode.** Until your Google app is verified, at most 100 test users can connect, and each must reconnect every 7 days.
 - **One instance only.** SQLite has a single writer. Run exactly one instance; scale up, not out.
-- **Revoked Google access.** When Google refuses a user's grant (revoked by the user, or expired in Testing mode), the server deletes that user's data and the tool call fails with "Google access was revoked; reconnect this connector". The assistant's next request is rejected, and it asks the user to sign in again. Every assistant of that user must reconnect.
+- **Revoked Google access.** The server learns that a grant was revoked (by the user, or expired in Testing mode) only when it next calls Google for that user. On that call, Google refuses the grant, the server deletes the user's data, and the tool fails with "Google access was revoked; reconnect this connector". The assistant's next request is rejected, and it asks the user to sign in again. Every assistant of that user must reconnect. A user who never comes back is removed by the 180-day purge.
 - **Rate limits.** Each user gets 120 read calls and 30 write calls per minute by default. Over the limit, the tool returns an error such as "rate limited, retry after 12s", and the assistant can wait and retry.
 
 ## Security notes

@@ -37,7 +37,7 @@ body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; 
 <h2>How to erase everything</h2>
 <ul>
 <li>Ask the operator at <a href="mailto:{{.OperatorEmail}}">{{.OperatorEmail}}</a> to disconnect you: your Google grant is revoked and every row about you is deleted from the live database.</li>
-<li>Revoke access yourself at <a href="{{.PermissionsURL}}">myaccount.google.com/permissions</a>. The server deletes your data the next time it finds the grant revoked.</li>
+<li>Revoke access yourself at <a href="{{.PermissionsURL}}">myaccount.google.com/permissions</a>. Your data is deleted the next time you use the connector after revoking access at Google; if you never use it again, the automatic purge below removes it.</li>
 <li>Accounts unused for {{.InactivityDays}} days are purged automatically, and their Google grant revoked.</li>
 </ul>
 <p>The database is backed up. Deleted data can remain in those backups until they expire under the operator's backup retention; Google tokens stay encrypted there too.</p>
