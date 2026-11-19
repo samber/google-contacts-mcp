@@ -34,6 +34,10 @@ const (
 	googleCallbackPath = "/oauth/google/callback"
 	// readHeaderTimeout bounds slow-header (Slowloris) clients.
 	readHeaderTimeout = 10 * time.Second
+	// readTimeout bounds reading a whole request, body included, so a client
+	// trickling a body cannot hold a connection; every request body here
+	// (MCP JSON-RPC, OAuth forms) is a few KiB and arrives in well under a second.
+	readTimeout = 30 * time.Second
 	// idleTimeout closes idle keep-alive connections that PaaS routers leave open.
 	idleTimeout = 120 * time.Second
 	// shutdownTimeout drains in-flight requests on SIGINT/SIGTERM; a tool call
@@ -158,6 +162,7 @@ func newHTTPServer(addr string, h http.Handler, log *slog.Logger) *http.Server {
 		Addr:              addr,
 		Handler:           h,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}

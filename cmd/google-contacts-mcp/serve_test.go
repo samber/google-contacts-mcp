@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -169,5 +170,15 @@ func TestRunServe_ListenErrorFails(t *testing.T) {
 	}
 	if err := stop(); err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Errorf("err = %v, want a listen error", err)
+	}
+}
+
+func TestNewHTTPServer_Timeouts(t *testing.T) {
+	srv := newHTTPServer(":0", http.NotFoundHandler(), slog.Default())
+	if srv.ReadTimeout != readTimeout || srv.ReadHeaderTimeout != readHeaderTimeout || srv.IdleTimeout != idleTimeout {
+		t.Errorf("timeouts = read %v, header %v, idle %v", srv.ReadTimeout, srv.ReadHeaderTimeout, srv.IdleTimeout)
+	}
+	if readTimeout <= 0 {
+		t.Error("readTimeout must bound slow request bodies")
 	}
 }
