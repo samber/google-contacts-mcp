@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: google-contacts-mcp
+
+builds:
+  - id: google-contacts-mcp
+    main: ./cmd/google-contacts-mcp
+    binary: google-contacts-mcp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+dockers_v2:
+  - id: google-contacts-mcp
+    ids: [google-contacts-mcp]
+    dockerfile: Dockerfile
+    # The "release" stage copies the prebuilt binary instead of compiling.
+    flags:
+      - --target=release
+    images:
+      - ghcr.io/samber/google-contacts-mcp
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    extra_files:
+      - deploy/start.sh
+      - deploy/litestream.yml
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.licenses: MIT
+
+changelog:
+  use: github
+  sort: asc
