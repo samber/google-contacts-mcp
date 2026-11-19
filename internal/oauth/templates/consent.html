@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect Google Contacts</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; color: #1f2328; }
+.actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+button { font: inherit; padding: 0.5rem 1.25rem; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; }
+button[value="approve"] { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+</style>
+</head>
+<body>
+<h1>Connect Google Contacts</h1>
+<p>{{.ClientName}} wants to access your Google Contacts. You will be sent back to <strong>{{.RedirectHost}}</strong>.</p>
+<p>Next, Google asks you to sign in and to allow access to your contacts.</p>
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="pending" value="{{.Pending}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="actions">
+<button type="submit" name="action" value="approve">Continue with Google</button>
+<button type="submit" name="action" value="deny">Deny</button>
+</div>
+</form>
+</body>
+</html>
