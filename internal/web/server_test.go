@@ -259,3 +259,16 @@ func TestPages_NonGETRejected(t *testing.T) {
 		t.Errorf("POST /privacy: status %d, want 405", res.status)
 	}
 }
+
+func TestPrivacy_DeletionTimingAccurate(t *testing.T) {
+	h := newHandler(t, nil)
+	body := do(t, h, http.MethodGet, "/privacy", nil).body
+	for _, want := range []string{"expire after 10 minutes", "deleted within the hour", "backups", "backup retention"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("privacy page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "deleted after 10 minutes") {
+		t.Error("privacy page claims pending sign-ins are deleted after 10 minutes")
+	}
+}
