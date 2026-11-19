@@ -21,6 +21,7 @@ import (
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
 	"github.com/samber/google-contacts-mcp/internal/google"
+	"github.com/samber/google-contacts-mcp/internal/obs"
 	"github.com/samber/google-contacts-mcp/internal/store"
 )
 
@@ -75,6 +76,8 @@ type Deps struct {
 	IDTokenVerifier *oidc.IDTokenVerifier
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Metrics counts issued grants; nil disables it.
+	Metrics *obs.Metrics
 	// Now defaults to time.Now; tests replace it to expire pending requests.
 	Now func() time.Time
 }
@@ -90,6 +93,7 @@ type Server struct {
 	up           *google.Upstream
 	idTokens     *oidc.IDTokenVerifier
 	log          *slog.Logger
+	metrics      *obs.Metrics
 	now          func() time.Time
 	templates    *template.Template
 
@@ -120,6 +124,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		up:             deps.Upstream,
 		idTokens:       deps.IDTokenVerifier,
 		log:            deps.Logger,
+		metrics:        deps.Metrics,
 		now:            deps.Now,
 		templates:      tmpl,
 		issuer:         issuer,

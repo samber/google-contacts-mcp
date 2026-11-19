@@ -2,7 +2,6 @@ package contacts
 
 import (
 	"context"
-	"fmt"
 	"strings"
 )
 
@@ -41,12 +40,8 @@ func ResolveGroup(ctx context.Context, l GroupLister, group string) (string, err
 			matches = append(matches, g.ResourceName)
 		}
 	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("group %q not found", group)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("group %q is ambiguous (%d matches)", group, len(matches))
+	if len(matches) != 1 {
+		return "", GroupError{Group: group, Matches: len(matches)}
 	}
+	return matches[0], nil
 }

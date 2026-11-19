@@ -168,6 +168,16 @@ type ModifyMembersOutput struct {
 	Removed int    `json:"removed"`
 }
 
+// resultCount implementations feed the result_count of the tool log line:
+// contacts or groups returned, 1 for a single contact or group, 0 for delete.
+func (o SearchOutput) resultCount() int      { return len(o.Contacts) }
+func (o ListOutput) resultCount() int        { return len(o.Contacts) }
+func (ContactOutput) resultCount() int       { return 1 }
+func (DeleteOutput) resultCount() int        { return 0 }
+func (o GroupsOutput) resultCount() int      { return len(o.Groups) }
+func (GroupOutput) resultCount() int         { return 1 }
+func (ModifyMembersOutput) resultCount() int { return 1 }
+
 func readOnly() *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: true} }
 
 func writes(destructive bool) *mcp.ToolAnnotations {

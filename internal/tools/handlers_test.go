@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -704,7 +703,7 @@ func TestContactGroups(t *testing.T) {
 
 func TestToolErrorsHideUnknownCauses(t *testing.T) {
 	h := newHarness(t)
-	h.people.setErr("Search", errors.New("people search: google returned HTTP 503"))
+	h.people.setErr("Search", contacts.UpstreamStatusError{Op: "search", Status: 503})
 	h.fail("search_contacts", map[string]any{"query": "secret-query"}, "people search: google returned HTTP 503")
 }
 

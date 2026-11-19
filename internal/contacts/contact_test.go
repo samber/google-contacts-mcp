@@ -118,8 +118,12 @@ func TestToPerson_OmitsEmptyStructs(t *testing.T) {
 	p := Contact{DisplayName: "Only Display"}.ToPerson()
 	if p.Names != nil || p.Organizations != nil || p.Biographies != nil ||
 		p.EmailAddresses != nil || p.PhoneNumbers != nil || p.Urls != nil ||
-		p.Addresses != nil || p.Memberships != nil || p.Metadata != nil {
+		p.Addresses != nil || p.Metadata != nil {
 		t.Fatalf("ToPerson sent empty structs: %#v", p)
+	}
+	// A new contact always joins myContacts, so it shows in the main list.
+	if len(p.Memberships) != 1 || membershipGroup(p.Memberships[0]) != myContactsGroup {
+		t.Fatalf("memberships = %#v, want only %s", p.Memberships, myContactsGroup)
 	}
 	p = Contact{JobTitle: "CTO"}.ToPerson()
 	if len(p.Organizations) != 1 || p.Organizations[0].Title != "CTO" || p.Organizations[0].Name != "" {
@@ -432,5 +436,49 @@ func TestSentinelErrorsDistinct(t *testing.T) {
 				t.Fatalf("%v matches %v", a, b)
 			}
 		}
+	}
+}
+
+func TestToPerson_CreateIncludesMyContacts(t *testing.T) {
+	groupsOf := func(p *people.Person) []string {
+		var out []string
+		for _, m := range p.Memberships {
+			out = append(out, membershipGroup(m))
+		}
+		return out
+	}
+	cases := []struct {
+		groups []string
+		want   []string
+	}{
+		{nil, []string{"contactGroups/myContacts"}},
+		{[]string{"contactGroups/abc"}, []string{"contactGroups/myContacts", "contactGroups/abc"}},
+		// Already listed: kept once, in the caller's order.
+		{[]string{"contactGroups/abc", "contactGroups/myContacts"}, []string{"contactGroups/abc", "contactGroups/myContacts"}},
+	}
+	for _, tc := range cases {
+		got := groupsOf(Contact{GivenName: "Ada", Groups: tc.groups}.ToPerson())
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("groups %v: memberships = %v, want %v", tc.groups, got, tc.want)
+		}
+	}
+	// A fetched contact keeps exactly its own memberships.
+	fetched := FromPerson(&people.Person{ResourceName: "people/c1", Memberships: []*people.Membership{
+		{ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: "contactGroups/abc"}},
+	}})
+	if got := groupsOf(fetched.ToPerson()); !reflect.DeepEqual(got, []string{"contactGroups/abc"}) {
+		t.Errorf("fetched memberships = %v, want only contactGroups/abc", got)
+	}
+}
+
+func TestGroupError(t *testing.T) {
+	if got := (GroupError{Group: "x"}).Error(); got != `group "x" not found` {
+		t.Errorf("not found = %q", got)
+	}
+	if got := (GroupError{Group: "x", Matches: 3}).Error(); got != `group "x" is ambiguous (3 matches)` {
+		t.Errorf("ambiguous = %q", got)
+	}
+	if got := (UpstreamStatusError{Op: "list", Status: 502}).Error(); got != "people list: google returned HTTP 502" {
+		t.Errorf("upstream = %q", got)
 	}
 }

@@ -30,3 +30,29 @@ func (e RateLimitedError) Error() string {
 	// Round up so the caller never retries before the limit actually resets.
 	return fmt.Sprintf("rate limited, retry after %ds", int64(math.Ceil(e.RetryAfter.Seconds())))
 }
+
+// UpstreamStatusError reports a People API answer with an HTTP status that
+// maps to no other error. It carries only the operation and the status, never
+// Google's response body, so it is safe to show to the assistant.
+type UpstreamStatusError struct {
+	Op     string
+	Status int
+}
+
+func (e UpstreamStatusError) Error() string {
+	return fmt.Sprintf("people %s: google returned HTTP %d", e.Op, e.Status)
+}
+
+// GroupError reports a group name that matched no user group (Matches 0) or
+// several. It names only the group the caller gave.
+type GroupError struct {
+	Group   string
+	Matches int
+}
+
+func (e GroupError) Error() string {
+	if e.Matches == 0 {
+		return fmt.Sprintf("group %q not found", e.Group)
+	}
+	return fmt.Sprintf("group %q is ambiguous (%d matches)", e.Group, e.Matches)
+}

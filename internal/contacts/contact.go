@@ -41,6 +41,9 @@ const (
 	sourceTypeContact = "CONTACT"
 	// contactGroupPrefix starts every contact group resource name.
 	contactGroupPrefix = "contactGroups/"
+	// myContactsGroup is the system group behind the user's main Contacts
+	// list; a contact created outside it only shows under "Other contacts".
+	myContactsGroup = contactGroupPrefix + "myContacts"
 )
 
 // systemGroupIDs are the People API system contact groups. Their memberships
@@ -194,7 +197,21 @@ func (c Contact) ToPerson() *people.Person {
 		setType: func(e *people.Address, a Address) { e.Type = a.Type },
 	})
 	p.Memberships = c.memberships(p.Memberships)
+	if c.raw == nil {
+		p.Memberships = withMyContacts(p.Memberships)
+	}
 	return p
+}
+
+// withMyContacts puts a myContacts membership first unless ms already has one.
+func withMyContacts(ms []*people.Membership) []*people.Membership {
+	for _, m := range ms {
+		if membershipGroup(m) == myContactsGroup {
+			return ms
+		}
+	}
+	mine := &people.Membership{ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: myContactsGroup}}
+	return append([]*people.Membership{mine}, ms...)
 }
 
 // sourceMetadata returns the metadata carrying the CONTACT source and its

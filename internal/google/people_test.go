@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/people/v1"
 
 	"github.com/samber/google-contacts-mcp/internal/contacts"
@@ -445,5 +446,53 @@ func TestErrorsNeverCarryQuery(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret-name") {
 		t.Errorf("error leaks the search query: %v", err)
+	}
+}
+
+type hookCall struct {
+	method string
+	code   int
+}
+
+func TestCallHook_ObservesEveryAttempt(t *testing.T) {
+	env := newTestEnv(t)
+	var calls []hookCall
+	env.up.onCall = func(_ context.Context, method string, code int, d time.Duration) {
+		if d < 0 {
+			t.Errorf("negative duration %v", d)
+		}
+		calls = append(calls, hookCall{method, code})
+	}
+	env.fake.override = func(w http.ResponseWriter, _ *http.Request, rt string) bool {
+		if rt == routeGet && env.fake.count(routeGet) == 1 {
+			googleError(w, http.StatusInternalServerError, "INTERNAL")
+			return true
+		}
+		return false
+	}
+	p := env.people(t)
+	if _, err := p.Get(context.Background(), "people/c9"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := p.Delete(context.Background(), "people/c9"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	want := []hookCall{{"get", http.StatusInternalServerError}, {"get", http.StatusOK}, {opDelete, http.StatusOK}}
+	if fmt.Sprint(calls) != fmt.Sprint(want) {
+		t.Fatalf("hook calls = %v, want %v", calls, want)
+	}
+}
+
+func TestUpstreamStatusError(t *testing.T) {
+	err := mapError("list", &googleapi.Error{Code: http.StatusBadGateway, Body: "secret body"})
+	var ue contacts.UpstreamStatusError
+	if !errors.As(err, &ue) || ue.Status != http.StatusBadGateway || ue.Op != "list" {
+		t.Fatalf("mapError = %#v, want UpstreamStatusError list 502", err)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error carries the body: %v", err)
+	}
+	if callStatus(errors.New("dial tcp: refused")) != statusNoResponse {
+		t.Fatal("transport error must report no status")
 	}
 }

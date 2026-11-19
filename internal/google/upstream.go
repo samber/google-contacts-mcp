@@ -62,6 +62,8 @@ type UpstreamConfig struct {
 	ClientID, ClientSecret, RedirectURL string
 	Endpoint                            oauth2.Endpoint
 	PeopleBaseURL, RevokeURL            string
+	// OnPeopleCall observes every People API call; nil disables it.
+	OnPeopleCall CallHook
 }
 
 // Upstream owns the Google OAuth client and every user's Google token source.
@@ -71,6 +73,7 @@ type Upstream struct {
 	revokeURL string
 	st        *store.Store
 	http      *http.Client
+	onCall    CallHook
 
 	// refreshes allows one in-flight refresh per user id.
 	refreshes singleflight.Group
@@ -105,6 +108,7 @@ func NewUpstream(cfg UpstreamConfig, st *store.Store, httpClient *http.Client) *
 		revokeURL: cfg.RevokeURL,
 		st:        st,
 		http:      httpClient,
+		onCall:    cfg.OnPeopleCall,
 	}
 }
 
@@ -169,7 +173,7 @@ func (u *Upstream) People(ctx context.Context, userID string) (contacts.People, 
 	if err != nil {
 		return nil, fmt.Errorf("google people client: %w", err)
 	}
-	return &peopleClient{svc: svc, userID: userID, warmed: &u.warmed}, nil
+	return &peopleClient{svc: svc, userID: userID, warmed: &u.warmed, onCall: u.onCall}, nil
 }
 
 // oauthContext makes the oauth2 package use u.http for token requests.

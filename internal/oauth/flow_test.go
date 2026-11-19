@@ -22,11 +22,14 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"golang.org/x/oauth2"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
 	"github.com/samber/google-contacts-mcp/internal/google"
+	"github.com/samber/google-contacts-mcp/internal/obs"
 	"github.com/samber/google-contacts-mcp/internal/store"
 )
 
@@ -153,6 +156,9 @@ type env struct {
 	kr     *crypto.Keyring
 	google *fakeGoogle
 	now    atomic.Pointer[time.Time]
+	// reg holds the metrics of every server of this env.
+	reg     *prometheus.Registry
+	metrics *obs.Metrics
 }
 
 type envOption func(cfg *config.Config)
@@ -178,7 +184,8 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	}); err != nil {
 		t.Fatalf("SaveClient: %v", err)
 	}
-	e := &env{t: t, st: st, kr: kr, google: newFakeGoogle(t)}
+	reg := prometheus.NewRegistry()
+	e := &env{t: t, st: st, kr: kr, google: newFakeGoogle(t), reg: reg, metrics: obs.NewMetrics(reg)}
 	e.srv, e.mux = e.newServer(testBaseURL, opts...)
 	return e
 }
@@ -218,6 +225,7 @@ func (e *env) newServer(base string, opts ...envOption) (*Server, *http.ServeMux
 		Upstream:        up,
 		Keyring:         e.kr,
 		IDTokenVerifier: oidc.NewVerifier(g.srv.URL, keySet, &oidc.Config{ClientID: testGoogleClientID}),
+		Metrics:         e.metrics,
 		Now: func() time.Time {
 			if p := e.now.Load(); p != nil {
 				return *p
@@ -598,6 +606,14 @@ func TestFlow_RefreshRotationAndReuse(t *testing.T) {
 	}
 	if _, err := e.verify(e.srv, tr2.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Error("new access token survived reuse")
+	}
+
+	// One code exchange and one successful refresh; refused ones are not grants.
+	want := "gcmcp_oauth_grants_total{kind=\"authorization_code\"} 1\ngcmcp_oauth_grants_total{kind=\"refresh_token\"} 1\n"
+	if err := testutil.GatherAndCompare(e.reg, strings.NewReader(
+		"# HELP gcmcp_oauth_grants_total Access tokens issued to MCP clients, by grant type.\n# TYPE gcmcp_oauth_grants_total counter\n"+want,
+	), "gcmcp_oauth_grants_total"); err != nil {
+		t.Errorf("grant metrics: %v", err)
 	}
 }
 

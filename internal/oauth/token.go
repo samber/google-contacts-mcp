@@ -15,6 +15,9 @@ const (
 	mediaTypeForm = "application/x-www-form-urlencoded"
 	// grantRefreshToken is the grant type whose reuse is logged.
 	grantRefreshToken = "refresh_token"
+	// grantAuthorizationCode is the other grant type served; both are the
+	// kinds of the oauth_grants metric.
+	grantAuthorizationCode = "authorization_code"
 	// paramGrantType names the grant in a token request.
 	paramGrantType = "grant_type"
 )
@@ -49,8 +52,14 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		s.provider.WriteAccessError(ctx, w, ar, err)
 		return
 	}
+	grant := r.PostForm.Get(paramGrantType)
 	s.log.InfoContext(ctx, "oauth: token issued",
-		slog.String("grant_type", r.PostForm.Get(paramGrantType)), slog.String("client_id", ar.GetClient().GetID()))
+		slog.String("grant_type", grant), slog.String("client_id", ar.GetClient().GetID()))
+	// fosite only issues these two grants; the check keeps the metric's
+	// label set bounded even so.
+	if grant == grantAuthorizationCode || grant == grantRefreshToken {
+		s.metrics.Grant(grant)
+	}
 	s.provider.WriteAccessResponse(ctx, w, ar, resp)
 }
 

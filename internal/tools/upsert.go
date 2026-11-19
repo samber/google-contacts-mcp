@@ -46,6 +46,15 @@ type UpsertOutput struct {
 	ChangedFields []string       `json:"changed_fields,omitempty" jsonschema:"People API fields written when enriched"`
 }
 
+// resultCount is 1 for the created or matched contact, else the number of
+// ambiguous candidates.
+func (o UpsertOutput) resultCount() int {
+	if o.Contact != nil {
+		return 1
+	}
+	return len(o.Candidates)
+}
+
 // upsertContact implements spec §8.1.
 func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (string, UpsertOutput, error) {
 	email := strings.TrimSpace(in.Email)

@@ -45,13 +45,36 @@ const (
 	// Google contact group types, mapped to contacts.GroupTypeUser/System.
 	googleGroupUser   = "USER_CONTACT_GROUP"
 	googleGroupSystem = "SYSTEM_CONTACT_GROUP"
+
+	// statusNoResponse is the status reported for a call that got no HTTP
+	// response.
+	statusNoResponse = 0
+
+	// People API operation names, used in errors and as the metrics method
+	// label.
+	opSearchWarmup  = "search warmup"
+	opSearch        = "search"
+	opList          = "list"
+	opGet           = "get"
+	opListGroups    = "list groups"
+	opCreate        = "create"
+	opUpdate        = "update"
+	opDelete        = "delete"
+	opCreateGroup   = "create group"
+	opModifyMembers = "modify group members"
 )
+
+// CallHook observes one People API call: its method (the operation name),
+// HTTP status (0 without a response) and duration. ctx is the caller's.
+type CallHook func(ctx context.Context, method string, code int, d time.Duration)
 
 // peopleClient implements contacts.People for one user.
 type peopleClient struct {
 	svc    *people.Service
 	userID string
 	warmed *sync.Map
+	// onCall observes every People API call; nil disables it.
+	onCall CallHook
 }
 
 var _ contacts.People = (*peopleClient)(nil)
@@ -62,7 +85,7 @@ var _ contacts.People = (*peopleClient)(nil)
 // after the warmup, which Google documents as a few seconds.
 func (p *peopleClient) Search(ctx context.Context, query string, limit int) ([]contacts.Contact, error) {
 	if _, done := p.warmed.Load(p.userID); !done {
-		if _, err := retryRead(ctx, "search warmup", func() (*people.SearchResponse, error) {
+		if _, err := retryRead(ctx, p, opSearchWarmup, func() (*people.SearchResponse, error) {
 			return p.svc.People.SearchContacts().Query("").ReadMask(personFields).Context(ctx).Do()
 		}); err != nil {
 			return nil, err
@@ -72,7 +95,7 @@ func (p *peopleClient) Search(ctx context.Context, query string, limit int) ([]c
 	if limit <= 0 || limit > maxSearchPageSize {
 		limit = maxSearchPageSize
 	}
-	resp, err := retryRead(ctx, "search", func() (*people.SearchResponse, error) {
+	resp, err := retryRead(ctx, p, opSearch, func() (*people.SearchResponse, error) {
 		return p.svc.People.SearchContacts().Query(query).ReadMask(personFields).PageSize(int64(limit)).Context(ctx).Do()
 	})
 	if err != nil {
@@ -90,7 +113,7 @@ func (p *peopleClient) Search(ctx context.Context, query string, limit int) ([]c
 // List returns one page of the user's contacts and the next page token, ""
 // on the last page. pageSize <= 0 and sortOrder "" keep Google's defaults.
 func (p *peopleClient) List(ctx context.Context, pageSize int, pageToken, sortOrder string) ([]contacts.Contact, string, error) {
-	resp, err := retryRead(ctx, "list", func() (*people.ListConnectionsResponse, error) {
+	resp, err := retryRead(ctx, p, opList, func() (*people.ListConnectionsResponse, error) {
 		call := p.svc.People.Connections.List(selfResource).PersonFields(personFields).Context(ctx)
 		if pageSize > 0 {
 			call = call.PageSize(int64(min(pageSize, maxListPageSize)))
@@ -117,7 +140,7 @@ func (p *peopleClient) List(ctx context.Context, pageSize int, pageToken, sortOr
 
 // Get reads one contact.
 func (p *peopleClient) Get(ctx context.Context, resourceName string) (contacts.Contact, error) {
-	person, err := retryRead(ctx, "get", func() (*people.Person, error) {
+	person, err := retryRead(ctx, p, opGet, func() (*people.Person, error) {
 		return p.svc.People.Get(resourceName).PersonFields(personFields).Context(ctx).Do()
 	})
 	if err != nil {
@@ -128,9 +151,11 @@ func (p *peopleClient) Get(ctx context.Context, resourceName string) (contacts.C
 
 // Create creates a contact and returns it as stored by Google.
 func (p *peopleClient) Create(ctx context.Context, c contacts.Contact) (contacts.Contact, error) {
-	person, err := p.svc.People.CreateContact(c.ToPerson()).PersonFields(personFields).Context(ctx).Do()
+	person, err := observe(ctx, p, opCreate, func() (*people.Person, error) {
+		return p.svc.People.CreateContact(c.ToPerson()).PersonFields(personFields).Context(ctx).Do()
+	})
 	if err != nil {
-		return contacts.Contact{}, mapError("create", err)
+		return contacts.Contact{}, mapError(opCreate, err)
 	}
 	return contacts.FromPerson(person), nil
 }
@@ -147,18 +172,22 @@ func (p *peopleClient) Update(ctx context.Context, c contacts.Contact, fields []
 	if len(fields) == 0 {
 		return contacts.Contact{}, errors.New("people update: no field to update")
 	}
-	person, err := p.svc.People.UpdateContact(c.ResourceName, c.ToPerson()).
-		UpdatePersonFields(strings.Join(fields, ",")).PersonFields(personFields).Context(ctx).Do()
+	person, err := observe(ctx, p, opUpdate, func() (*people.Person, error) {
+		return p.svc.People.UpdateContact(c.ResourceName, c.ToPerson()).
+			UpdatePersonFields(strings.Join(fields, ",")).PersonFields(personFields).Context(ctx).Do()
+	})
 	if err != nil {
-		return contacts.Contact{}, mapError("update", err)
+		return contacts.Contact{}, mapError(opUpdate, err)
 	}
 	return contacts.FromPerson(person), nil
 }
 
 // Delete deletes a contact.
 func (p *peopleClient) Delete(ctx context.Context, resourceName string) error {
-	_, err := p.svc.People.DeleteContact(resourceName).Context(ctx).Do()
-	return mapError("delete", err)
+	_, err := observe(ctx, p, opDelete, func() (*people.Empty, error) {
+		return p.svc.People.DeleteContact(resourceName).Context(ctx).Do()
+	})
+	return mapError(opDelete, err)
 }
 
 // ListGroups returns every user and system contact group.
@@ -166,7 +195,7 @@ func (p *peopleClient) ListGroups(ctx context.Context) ([]contacts.Group, error)
 	var out []contacts.Group
 	pageToken := ""
 	for {
-		resp, err := retryRead(ctx, "list groups", func() (*people.ListContactGroupsResponse, error) {
+		resp, err := retryRead(ctx, p, opListGroups, func() (*people.ListContactGroupsResponse, error) {
 			call := p.svc.ContactGroups.List().GroupFields(groupFields).PageSize(maxGroupPageSize).Context(ctx)
 			if pageToken != "" {
 				call = call.PageToken(pageToken)
@@ -190,12 +219,14 @@ func (p *peopleClient) ListGroups(ctx context.Context) ([]contacts.Group, error)
 
 // CreateGroup creates a user contact group.
 func (p *peopleClient) CreateGroup(ctx context.Context, name string) (contacts.Group, error) {
-	g, err := p.svc.ContactGroups.Create(&people.CreateContactGroupRequest{
-		ContactGroup:    &people.ContactGroup{Name: name},
-		ReadGroupFields: groupFields,
-	}).Context(ctx).Do()
+	g, err := observe(ctx, p, opCreateGroup, func() (*people.ContactGroup, error) {
+		return p.svc.ContactGroups.Create(&people.CreateContactGroupRequest{
+			ContactGroup:    &people.ContactGroup{Name: name},
+			ReadGroupFields: groupFields,
+		}).Context(ctx).Do()
+	})
 	if err != nil {
-		return contacts.Group{}, mapError("create group", err)
+		return contacts.Group{}, mapError(opCreateGroup, err)
 	}
 	return fromGroup(g), nil
 }
@@ -208,12 +239,14 @@ func (p *peopleClient) ModifyMembers(ctx context.Context, group string, add, rem
 	if err != nil {
 		return err
 	}
-	resp, err := p.svc.ContactGroups.Members.Modify(resourceName, &people.ModifyContactGroupMembersRequest{
-		ResourceNamesToAdd:    add,
-		ResourceNamesToRemove: remove,
-	}).Context(ctx).Do()
+	resp, err := observe(ctx, p, opModifyMembers, func() (*people.ModifyContactGroupMembersResponse, error) {
+		return p.svc.ContactGroups.Members.Modify(resourceName, &people.ModifyContactGroupMembersRequest{
+			ResourceNamesToAdd:    add,
+			ResourceNamesToRemove: remove,
+		}).Context(ctx).Do()
+	})
 	if err != nil {
-		return mapError("modify group members", err)
+		return mapError(opModifyMembers, err)
 	}
 	if len(resp.NotFoundResourceNames) > 0 {
 		return fmt.Errorf("%w: %s", contacts.ErrNotFound, strings.Join(resp.NotFoundResourceNames, ", "))
@@ -244,17 +277,44 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 }
 
 // retryRead runs an idempotent read, retrying it once on a Google 5xx.
-func retryRead[T any](ctx context.Context, op string, call func() (T, error)) (T, error) {
-	v, err := call()
+// Each attempt is observed separately.
+func retryRead[T any](ctx context.Context, p *peopleClient, op string, call func() (T, error)) (T, error) {
+	v, err := observe(ctx, p, op, call)
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) && gerr.Code >= http.StatusInternalServerError && ctx.Err() == nil {
-		v, err = call()
+		v, err = observe(ctx, p, op, call)
 	}
 	if err != nil {
 		var zero T
 		return zero, mapError(op, err)
 	}
 	return v, nil
+}
+
+// observe runs one People API call and reports its method, HTTP status and
+// duration to p.onCall.
+func observe[T any](ctx context.Context, p *peopleClient, method string, call func() (T, error)) (T, error) {
+	start := time.Now()
+	v, err := call()
+	if p.onCall != nil {
+		p.onCall(ctx, method, callStatus(err), time.Since(start))
+	}
+	return v, err
+}
+
+// callStatus is the HTTP status of a finished call: Google's code on an API
+// error, 0 when no response arrived (transport error, token refresh failure).
+// The People client turns every non-2xx answer into a *googleapi.Error, so a
+// nil error means 200.
+func callStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	var gerr *googleapi.Error
+	if errors.As(err, &gerr) {
+		return gerr.Code
+	}
+	return statusNoResponse
 }
 
 // mapError converts a People API error to the contacts errors. Messages
@@ -281,7 +341,7 @@ func mapError(op string, err error) error {
 		case gerr.Code == http.StatusBadRequest:
 			return fmt.Errorf("people %s: google returned HTTP %d: %w", op, gerr.Code, contacts.ErrInvalidArgument)
 		}
-		return fmt.Errorf("people %s: google returned HTTP %d", op, gerr.Code)
+		return contacts.UpstreamStatusError{Op: op, Status: gerr.Code}
 	}
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
