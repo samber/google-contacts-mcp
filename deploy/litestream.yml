@@ -15,3 +15,6 @@ dbs:
       endpoint: ${LITESTREAM_ENDPOINT}
       access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
       secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+      # Uncomment for Cellar if Litestream cannot reach the bucket with
+      # virtual-host-style URLs (<bucket>.<endpoint>).
+      # force-path-style: true
