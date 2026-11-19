@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/samber/google-contacts-mcp/internal/crypto"
 )
 
 func noEnv(string) string { return "" }
@@ -23,7 +25,6 @@ func TestRun_StubsAndUnknown(t *testing.T) {
 		"default serve": nil,
 		"flags only":    {"--listen=:1"},
 		"serve":         {"serve"},
-		"genkey":        {"genkey"},
 		"rekey":         {"rekey"},
 		"disconnect":    {"disconnect", "a@b.c"},
 		"unknown":       {"bogus"},
@@ -70,5 +71,28 @@ func TestRun_Help(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "-base-url") {
 		t.Errorf("stdout = %q, want usage", out.String())
+	}
+}
+
+func TestRun_Genkey(t *testing.T) {
+	// genkey must not need any configuration: it runs before keys exist.
+	var out, errOut bytes.Buffer
+	if code := run([]string{"genkey"}, noEnv, &out, &errOut); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut.String())
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", errOut.String())
+	}
+	line := out.String()
+	if strings.Count(line, "\n") != 1 || !strings.HasSuffix(line, "\n") {
+		t.Fatalf("stdout = %q, want one line", line)
+	}
+	if _, err := crypto.ParseKeyring(strings.TrimSuffix(line, "\n")); err != nil {
+		t.Errorf("genkey output does not parse: %v", err)
+	}
+
+	errOut.Reset()
+	if code := run([]string{"genkey", "extra"}, noEnv, &out, &errOut); code != exitFailure {
+		t.Errorf("genkey with args: exit = %d, want %d", code, exitFailure)
 	}
 }

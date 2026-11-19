@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
+	"github.com/samber/google-contacts-mcp/internal/crypto"
 )
 
 // version is set at build time with -ldflags "-X main.version=<tag>".
@@ -43,8 +44,20 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		}
 		return 0
 	case cmdGenkey:
-		_, _ = fmt.Fprintf(stderr, "%s: not implemented\n", cmd)
-		return exitFailure
+		// genkey never loads config: it creates the key the config needs.
+		if len(args) > 0 {
+			_, _ = fmt.Fprintf(stderr, "%s: unexpected arguments %q\n", cmd, args)
+			return exitFailure
+		}
+		entry, err := crypto.GenerateKey()
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return exitFailure
+		}
+		if _, err := fmt.Fprintln(stdout, entry); err != nil {
+			return exitFailure
+		}
+		return 0
 	case config.CmdServe, config.CmdRekey, config.CmdDisconnect:
 		if _, err := config.Load(cmd, args, getenv); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
