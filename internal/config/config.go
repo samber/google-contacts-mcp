@@ -105,6 +105,8 @@ type Config struct {
 	RateLimitWrites int
 	OperatorName    string
 	OperatorEmail   string
+	// Args holds the positional arguments left after the flags.
+	Args []string
 }
 
 // EnvName returns the env var read for a flag: GCMCP_ plus the flag name in upper snake case.
@@ -197,9 +199,55 @@ func Usage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "Env only (required): %s, %s\n", envGoogleClientSecret, envEncryptionKeys)
 }
 
-// Load parses args (without the subcommand) and env into a validated Config.
-// It returns flag.ErrHelp when -h or --help is given.
-func Load(args []string, getenv func(string) string) (Config, error) {
+// Subcommands that read configuration. genkey and version need none.
+const (
+	CmdServe      = "serve"
+	CmdRekey      = "rekey"
+	CmdDisconnect = "disconnect"
+)
+
+// Keys of the values a command may require; flags carry a "--" prefix in errors.
+const (
+	reqBaseURL            = "--" + flagBaseURL
+	reqDBPath             = "--" + flagDBPath
+	reqGoogleClientID     = "--" + flagGoogleClientID
+	reqGoogleClientSecret = envGoogleClientSecret
+	reqEncryptionKeys     = envEncryptionKeys
+	reqOperatorName       = "--" + flagOperatorName
+	reqOperatorEmail      = "--" + flagOperatorEmail
+)
+
+// commandSpec lists what each command needs, so offline maintenance commands
+// do not demand server-only settings such as --base-url.
+type commandSpec struct {
+	required []string
+	// nargs is the exact number of positional arguments accepted.
+	nargs int
+	// argsUsage names the positional arguments in error messages.
+	argsUsage string
+}
+
+var commandSpecs = map[string]commandSpec{
+	CmdServe: {required: []string{
+		reqBaseURL, reqDBPath, reqGoogleClientID, reqGoogleClientSecret,
+		reqEncryptionKeys, reqOperatorName, reqOperatorEmail,
+	}},
+	CmdRekey: {required: []string{reqDBPath, reqEncryptionKeys}},
+	CmdDisconnect: {
+		required:  []string{reqDBPath, reqEncryptionKeys, reqGoogleClientID, reqGoogleClientSecret},
+		nargs:     1,
+		argsUsage: "<email|google-sub>",
+	},
+}
+
+// Load parses args (without the subcommand) and env into a validated Config
+// for cmd. Flags must come before positional arguments, which land in
+// Config.Args. It returns flag.ErrHelp when -h or --help is given.
+func Load(cmd string, args []string, getenv func(string) string) (Config, error) {
+	spec, ok := commandSpecs[cmd]
+	if !ok {
+		return Config{}, fmt.Errorf("unknown command %q", cmd)
+	}
 	var r raw
 	fs, err := newFlagSet(getenv, &r)
 	if err != nil {
@@ -225,20 +273,30 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 		RateLimitWrites:    r.rateLimitWrites,
 		OperatorName:       strings.TrimSpace(r.operatorName),
 		OperatorEmail:      strings.TrimSpace(r.operatorEmail),
+		Args:               fs.Args(),
 	}
 
 	var errs []error
-	required := []struct{ name, value string }{
-		{"--" + flagBaseURL, r.baseURL},
-		{"--" + flagGoogleClientID, cfg.GoogleClientID},
-		{envGoogleClientSecret, cfg.GoogleClientSecret},
-		{envEncryptionKeys, cfg.EncryptionKeys},
-		{"--" + flagOperatorName, cfg.OperatorName},
-		{"--" + flagOperatorEmail, cfg.OperatorEmail},
+	switch {
+	case len(cfg.Args) == spec.nargs:
+	case spec.nargs == 0:
+		errs = append(errs, fmt.Errorf("%s: unexpected argument %q (flags must come first)", cmd, cfg.Args[0]))
+	default:
+		errs = append(errs, fmt.Errorf("%s: want exactly %d argument %s, got %d", cmd, spec.nargs, spec.argsUsage, len(cfg.Args)))
 	}
-	for _, req := range required {
-		if req.value == "" {
-			errs = append(errs, fmt.Errorf("%s is required", req.name))
+
+	values := map[string]string{
+		reqBaseURL:            r.baseURL,
+		reqDBPath:             cfg.DBPath,
+		reqGoogleClientID:     cfg.GoogleClientID,
+		reqGoogleClientSecret: cfg.GoogleClientSecret,
+		reqEncryptionKeys:     cfg.EncryptionKeys,
+		reqOperatorName:       cfg.OperatorName,
+		reqOperatorEmail:      cfg.OperatorEmail,
+	}
+	for _, name := range spec.required {
+		if values[name] == "" {
+			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
 	}
 

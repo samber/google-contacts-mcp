@@ -39,7 +39,7 @@ func withArgs(extra ...string) []string {
 }
 
 func TestLoad_Defaults(t *testing.T) {
-	cfg, err := Load(withArgs(), envFunc(nil))
+	cfg, err := Load(CmdServe, withArgs(), envFunc(nil))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_PortEnv(t *testing.T) {
-	cfg, err := Load(withArgs(), envFunc(map[string]string{"PORT": "9000"}))
+	cfg, err := Load(CmdServe, withArgs(), envFunc(map[string]string{"PORT": "9000"}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestLoad_PortEnv(t *testing.T) {
 		t.Errorf("Listen = %q, want 0.0.0.0:9000", cfg.Listen)
 	}
 
-	cfg, err = Load(withArgs("--listen=127.0.0.1:7000"), envFunc(map[string]string{"PORT": "9000"}))
+	cfg, err = Load(CmdServe, withArgs("--listen=127.0.0.1:7000"), envFunc(map[string]string{"PORT": "9000"}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestLoad_PortEnv(t *testing.T) {
 		t.Errorf("Listen = %q, want flag value", cfg.Listen)
 	}
 
-	cfg, err = Load(withArgs(), envFunc(map[string]string{"PORT": "9000", "GCMCP_LISTEN": "127.0.0.1:6000"}))
+	cfg, err = Load(CmdServe, withArgs(), envFunc(map[string]string{"PORT": "9000", "GCMCP_LISTEN": "127.0.0.1:6000"}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestLoad_PortEnv(t *testing.T) {
 }
 
 func TestLoad_EnvAndFlagPrecedence(t *testing.T) {
-	cfg, err := Load(withArgs("--db-path=/b"), envFunc(map[string]string{"GCMCP_DB_PATH": "/a"}))
+	cfg, err := Load(CmdServe, withArgs("--db-path=/b"), envFunc(map[string]string{"GCMCP_DB_PATH": "/a"}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestLoad_EnvAndFlagPrecedence(t *testing.T) {
 		t.Errorf("DBPath = %q, want /b", cfg.DBPath)
 	}
 
-	cfg, err = Load(withArgs(), envFunc(map[string]string{
+	cfg, err = Load(CmdServe, withArgs(), envFunc(map[string]string{
 		"GCMCP_DB_PATH":           "/a",
 		"GCMCP_ENABLE_DCR":        "false",
 		"GCMCP_RATE_LIMIT_READS":  "10",
@@ -132,11 +132,11 @@ func TestLoad_EnvAndFlagPrecedence(t *testing.T) {
 		t.Errorf("env not applied: %+v", cfg)
 	}
 
-	if _, err := Load(withArgs(), envFunc(map[string]string{"GCMCP_RATE_LIMIT_READS": "abc"})); err == nil ||
+	if _, err := Load(CmdServe, withArgs(), envFunc(map[string]string{"GCMCP_RATE_LIMIT_READS": "abc"})); err == nil ||
 		!strings.Contains(err.Error(), "GCMCP_RATE_LIMIT_READS") {
 		t.Errorf("bad int env: err = %v, want error naming GCMCP_RATE_LIMIT_READS", err)
 	}
-	if _, err := Load(withArgs(), envFunc(map[string]string{"GCMCP_ENABLE_DCR": "maybe"})); err == nil ||
+	if _, err := Load(CmdServe, withArgs(), envFunc(map[string]string{"GCMCP_ENABLE_DCR": "maybe"})); err == nil ||
 		!strings.Contains(err.Error(), "GCMCP_ENABLE_DCR") {
 		t.Errorf("bad bool env: err = %v, want error naming GCMCP_ENABLE_DCR", err)
 	}
@@ -144,7 +144,7 @@ func TestLoad_EnvAndFlagPrecedence(t *testing.T) {
 
 func TestLoad_SecretsEnvOnly(t *testing.T) {
 	for _, flag := range []string{"--google-client-secret=x", "--encryption-keys=x"} {
-		if _, err := Load(withArgs(flag), envFunc(nil)); err == nil {
+		if _, err := Load(CmdServe, withArgs(flag), envFunc(nil)); err == nil {
 			t.Errorf("%s: err = nil, want unknown-flag error", flag)
 		}
 	}
@@ -165,7 +165,7 @@ func TestLoad_Required(t *testing.T) {
 					args = append(args, a)
 				}
 			}
-			_, err := Load(args, envFunc(nil))
+			_, err := Load(CmdServe, args, envFunc(nil))
 			if err == nil || !strings.Contains(err.Error(), name) {
 				t.Errorf("err = %v, want error naming %s", err, name)
 			}
@@ -173,7 +173,7 @@ func TestLoad_Required(t *testing.T) {
 	}
 	for _, key := range []string{"GCMCP_GOOGLE_CLIENT_SECRET", "GCMCP_ENCRYPTION_KEYS"} {
 		t.Run(key, func(t *testing.T) {
-			_, err := Load(withArgs(), envFunc(map[string]string{key: ""}))
+			_, err := Load(CmdServe, withArgs(), envFunc(map[string]string{key: ""}))
 			if err == nil || !strings.Contains(err.Error(), key) {
 				t.Errorf("err = %v, want error naming %s", err, key)
 			}
@@ -204,7 +204,7 @@ func TestLoad_BaseURLMustBeHTTPS(t *testing.T) {
 				"--operator-name=Jane Doe",
 				"--operator-email=jane@example.com",
 			}
-			_, err := Load(args, envFunc(nil))
+			_, err := Load(CmdServe, args, envFunc(nil))
 			if ok && err != nil {
 				t.Errorf("err = %v, want nil", err)
 			}
@@ -219,18 +219,18 @@ func TestLoad_Metrics(t *testing.T) {
 	const pw15 = "123456789012345"
 	const pw16 = "1234567890123456"
 
-	if _, err := Load(withArgs("--metrics", "--metrics-password="+pw16), envFunc(nil)); err == nil ||
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-password="+pw16), envFunc(nil)); err == nil ||
 		!strings.Contains(err.Error(), "metrics-user") {
 		t.Errorf("missing user: err = %v", err)
 	}
-	if _, err := Load(withArgs("--metrics", "--metrics-user=u"), envFunc(nil)); err == nil ||
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u"), envFunc(nil)); err == nil ||
 		!strings.Contains(err.Error(), "metrics-password") {
 		t.Errorf("missing password: err = %v", err)
 	}
-	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw15), envFunc(nil)); err == nil {
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw15), envFunc(nil)); err == nil {
 		t.Error("15-char password: err = nil, want error")
 	}
-	cfg, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16), envFunc(nil))
+	cfg, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16), envFunc(nil))
 	if err != nil {
 		t.Fatalf("16-char password: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestLoad_Metrics(t *testing.T) {
 		t.Errorf("cfg = %+v", cfg)
 	}
 
-	cfg, err = Load(withArgs("--metrics", "--metrics-user=u"), envFunc(map[string]string{"GCMCP_METRICS_PASSWORD": pw16}))
+	cfg, err = Load(CmdServe, withArgs("--metrics", "--metrics-user=u"), envFunc(map[string]string{"GCMCP_METRICS_PASSWORD": pw16}))
 	if err != nil {
 		t.Fatalf("env password: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestLoad_Metrics(t *testing.T) {
 	if err := os.WriteFile(path, []byte("  "+pw16+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+path), envFunc(nil))
+	cfg, err = Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+path), envFunc(nil))
 	if err != nil {
 		t.Fatalf("password file: %v", err)
 	}
@@ -262,21 +262,21 @@ func TestLoad_Metrics(t *testing.T) {
 	if err := os.WriteFile(shortPath, []byte(pw15+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+shortPath), envFunc(nil)); err == nil {
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+shortPath), envFunc(nil)); err == nil {
 		t.Error("15-char password file: err = nil, want error")
 	}
 
-	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+filepath.Join(t.TempDir(), "missing")), envFunc(nil)); err == nil {
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+filepath.Join(t.TempDir(), "missing")), envFunc(nil)); err == nil {
 		t.Error("missing password file: err = nil, want error")
 	}
 
-	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16, "--metrics-password-file="+path), envFunc(nil)); err == nil {
+	if _, err := Load(CmdServe, withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16, "--metrics-password-file="+path), envFunc(nil)); err == nil {
 		t.Error("password and password file: err = nil, want error")
 	}
 }
 
 func TestLoad_AllowedDomains(t *testing.T) {
-	cfg, err := Load(withArgs("--allowed-domains= Acme.com, gmail.com "), envFunc(nil))
+	cfg, err := Load(CmdServe, withArgs("--allowed-domains= Acme.com, gmail.com "), envFunc(nil))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestLoad_AllowedDomains(t *testing.T) {
 		t.Errorf("AllowedDomains = %v, want %v", cfg.AllowedDomains, want)
 	}
 
-	cfg, err = Load(withArgs("--allowed-domains=,"), envFunc(nil))
+	cfg, err = Load(CmdServe, withArgs("--allowed-domains=,"), envFunc(nil))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -303,9 +303,79 @@ func TestLoad_InvalidValues(t *testing.T) {
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(args, envFunc(nil)); err == nil {
+			if _, err := Load(CmdServe, args, envFunc(nil)); err == nil {
 				t.Error("err = nil, want error")
 			}
 		})
+	}
+}
+
+func TestLoad_ServeRejectsPositional(t *testing.T) {
+	_, err := Load(CmdServe, withArgs("stray", "--allowed-domains=acme.com"), envFunc(nil))
+	if err == nil || !strings.Contains(err.Error(), `"stray"`) {
+		t.Errorf("err = %v, want error naming the stray argument", err)
+	}
+}
+
+func TestLoad_RekeyMinimalRequirements(t *testing.T) {
+	env := func(key string) string {
+		if key == "GCMCP_ENCRYPTION_KEYS" {
+			return "k1:AAAA"
+		}
+		return ""
+	}
+	cfg, err := Load(CmdRekey, nil, env)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DBPath != "./data/google-contacts-mcp.db" || cfg.EncryptionKeys != "k1:AAAA" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+
+	if _, err := Load(CmdRekey, nil, func(string) string { return "" }); err == nil ||
+		!strings.Contains(err.Error(), "GCMCP_ENCRYPTION_KEYS") {
+		t.Errorf("missing keys: err = %v", err)
+	}
+	if _, err := Load(CmdRekey, []string{"--db-path="}, env); err == nil || !strings.Contains(err.Error(), "db-path") {
+		t.Errorf("empty db path: err = %v", err)
+	}
+	if _, err := Load(CmdRekey, []string{"extra"}, env); err == nil || !strings.Contains(err.Error(), `"extra"`) {
+		t.Errorf("positional: err = %v", err)
+	}
+}
+
+func TestLoad_DisconnectRequiresOneArg(t *testing.T) {
+	env := func(key string) string {
+		return map[string]string{
+			"GCMCP_ENCRYPTION_KEYS":      "k1:AAAA",
+			"GCMCP_GOOGLE_CLIENT_SECRET": "secret",
+		}[key]
+	}
+	flags := []string{"--db-path=/tmp/x.db", "--google-client-id=cid"}
+
+	if _, err := Load(CmdDisconnect, flags, env); err == nil {
+		t.Error("0 args: err = nil, want error")
+	}
+	cfg, err := Load(CmdDisconnect, append(append([]string{}, flags...), "a@b.c"), env)
+	if err != nil {
+		t.Fatalf("1 arg: %v", err)
+	}
+	if len(cfg.Args) != 1 || cfg.Args[0] != "a@b.c" || cfg.DBPath != "/tmp/x.db" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+	if _, err := Load(CmdDisconnect, append(append([]string{}, flags...), "a@b.c", "d@e.f"), env); err == nil {
+		t.Error("2 args: err = nil, want error")
+	}
+	if _, err := Load(CmdDisconnect, []string{"a@b.c"}, env); err == nil ||
+		!strings.Contains(err.Error(), "google-client-id") {
+		t.Errorf("missing client id: err = %v", err)
+	}
+}
+
+func TestLoad_UnknownCommand(t *testing.T) {
+	for _, cmd := range []string{"", "genkey", "version", "bogus"} {
+		if _, err := Load(cmd, withArgs(), envFunc(nil)); err == nil {
+			t.Errorf("%q: err = nil, want error", cmd)
+		}
 	}
 }
