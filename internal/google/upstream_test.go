@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,5 +250,123 @@ func TestTokenSource_InvalidGrantKeepsUserWhoReconsented(t *testing.T) {
 	}
 	if _, _, auth, _ := env.fake.last(routeGet); auth != "Bearer access-reconsent" {
 		t.Errorf("Authorization = %q, want the newer grant's token", auth)
+	}
+}
+
+// unauthorized makes the fake answer 401 to the first n requests on rt.
+func (e *testEnv) unauthorized(rt string, n int32) {
+	var served atomic.Int32
+	e.fake.override = func(w http.ResponseWriter, _ *http.Request, got string) bool {
+		if got != rt || served.Add(1) > n {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		e.fake.write(w, `{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}`)
+		return true
+	}
+}
+
+func TestPeople401_RefreshInvalidGrantDeletesUser(t *testing.T) {
+	env := newTestEnv(t)
+	// The stored access token is still valid: only Google knows it was revoked.
+	env.unauthorized(routeGet, 1)
+	env.fake.tokenError = "invalid_grant"
+	ctx := context.Background()
+	_, err := env.people(t).Get(ctx, "people/c1")
+	if !errors.Is(err, contacts.ErrUpstreamAuth) {
+		t.Fatalf("err = %v, want ErrUpstreamAuth", err)
+	}
+	if n := env.fake.tokenHits.Load(); n != 1 {
+		t.Errorf("token hits = %d, want 1", n)
+	}
+	if n := env.fake.count(routeGet); n != 1 {
+		t.Errorf("people calls = %d, want 1", n)
+	}
+	if _, err := env.st.UserBySubOrEmail(ctx, "sub-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("UserBySubOrEmail err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPeople401_RefreshOKRetriesOnce(t *testing.T) {
+	env := newTestEnv(t)
+	env.unauthorized(routeGet, 1)
+	ctx := context.Background()
+	got, err := env.people(t).Get(ctx, "people/c1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ResourceName != "people/c1" {
+		t.Errorf("contact = %+v", got)
+	}
+	if n := env.fake.tokenHits.Load(); n != 1 {
+		t.Errorf("token hits = %d, want 1", n)
+	}
+	if n := env.fake.count(routeGet); n != 2 {
+		t.Errorf("people calls = %d, want 2", n)
+	}
+	if _, _, auth, _ := env.fake.last(routeGet); auth != "Bearer access-new" {
+		t.Errorf("retry Authorization = %q, want the refreshed token", auth)
+	}
+	if tok, err := env.st.GoogleToken(ctx, env.userID); err != nil || tok.AccessToken != "access-new" {
+		t.Errorf("stored access = %q, err %v; want access-new", tok.AccessToken, err)
+	}
+}
+
+func TestPeople401_Twice_NoDelete(t *testing.T) {
+	env := newTestEnv(t)
+	env.unauthorized(routeGet, 2)
+	ctx := context.Background()
+	_, err := env.people(t).Get(ctx, "people/c1")
+	if !errors.Is(err, contacts.ErrUpstreamAuth) {
+		t.Fatalf("err = %v, want ErrUpstreamAuth", err)
+	}
+	if n := env.fake.tokenHits.Load(); n != 1 {
+		t.Errorf("token hits = %d, want 1", n)
+	}
+	if n := env.fake.count(routeGet); n != 2 {
+		t.Errorf("people calls = %d, want 2", n)
+	}
+	if _, err := env.st.UserBySubOrEmail(ctx, "sub-1"); err != nil {
+		t.Errorf("UserBySubOrEmail: %v, want the user kept", err)
+	}
+}
+
+func TestPeople401_WriteRetriedOnce(t *testing.T) {
+	env := newTestEnv(t)
+	env.unauthorized(routeCreate, 1)
+	ctx := context.Background()
+	got, err := env.people(t).Create(ctx, contacts.Contact{GivenName: "Ada"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.ResourceName != "people/new" {
+		t.Errorf("contact = %+v", got)
+	}
+	if n := env.fake.count(routeCreate); n != 2 {
+		t.Errorf("create calls = %d, want 2", n)
+	}
+	if n := env.fake.tokenHits.Load(); n != 1 {
+		t.Errorf("token hits = %d, want 1", n)
+	}
+}
+
+func TestPeople401_OtherRefreshErrorKeepsUser(t *testing.T) {
+	env := newTestEnv(t)
+	env.unauthorized(routeGet, 1)
+	env.fake.tokenError = "server_error"
+	ctx := context.Background()
+	_, err := env.people(t).Get(ctx, "people/c1")
+	if err == nil || errors.Is(err, contacts.ErrUpstreamAuth) {
+		t.Fatalf("err = %v, want a plain refresh error", err)
+	}
+	if strings.Contains(err.Error(), "secret detail") {
+		t.Errorf("error leaks the token response body: %v", err)
+	}
+	if n := env.fake.count(routeGet); n != 1 {
+		t.Errorf("people calls = %d, want 1", n)
+	}
+	if _, err := env.st.UserBySubOrEmail(ctx, "sub-1"); err != nil {
+		t.Errorf("UserBySubOrEmail: %v, want the user kept", err)
 	}
 }

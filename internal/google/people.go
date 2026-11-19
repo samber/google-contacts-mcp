@@ -75,6 +75,8 @@ type peopleClient struct {
 	warmed *sync.Map
 	// onCall observes every People API call; nil disables it.
 	onCall CallHook
+	// tokens is the client's token source, refreshed on a People API 401.
+	tokens *clientTokenSource
 }
 
 var _ contacts.People = (*peopleClient)(nil)
@@ -151,7 +153,7 @@ func (p *peopleClient) Get(ctx context.Context, resourceName string) (contacts.C
 
 // Create creates a contact and returns it as stored by Google.
 func (p *peopleClient) Create(ctx context.Context, c contacts.Contact) (contacts.Contact, error) {
-	person, err := observe(ctx, p, opCreate, func() (*people.Person, error) {
+	person, err := authed(ctx, p, opCreate, func() (*people.Person, error) {
 		return p.svc.People.CreateContact(c.ToPerson()).PersonFields(personFields).Context(ctx).Do()
 	})
 	if err != nil {
@@ -172,7 +174,7 @@ func (p *peopleClient) Update(ctx context.Context, c contacts.Contact, fields []
 	if len(fields) == 0 {
 		return contacts.Contact{}, errors.New("people update: no field to update")
 	}
-	person, err := observe(ctx, p, opUpdate, func() (*people.Person, error) {
+	person, err := authed(ctx, p, opUpdate, func() (*people.Person, error) {
 		return p.svc.People.UpdateContact(c.ResourceName, c.ToPerson()).
 			UpdatePersonFields(strings.Join(fields, ",")).PersonFields(personFields).Context(ctx).Do()
 	})
@@ -184,7 +186,7 @@ func (p *peopleClient) Update(ctx context.Context, c contacts.Contact, fields []
 
 // Delete deletes a contact.
 func (p *peopleClient) Delete(ctx context.Context, resourceName string) error {
-	_, err := observe(ctx, p, opDelete, func() (*people.Empty, error) {
+	_, err := authed(ctx, p, opDelete, func() (*people.Empty, error) {
 		return p.svc.People.DeleteContact(resourceName).Context(ctx).Do()
 	})
 	return mapError(opDelete, err)
@@ -219,7 +221,7 @@ func (p *peopleClient) ListGroups(ctx context.Context) ([]contacts.Group, error)
 
 // CreateGroup creates a user contact group.
 func (p *peopleClient) CreateGroup(ctx context.Context, name string) (contacts.Group, error) {
-	g, err := observe(ctx, p, opCreateGroup, func() (*people.ContactGroup, error) {
+	g, err := authed(ctx, p, opCreateGroup, func() (*people.ContactGroup, error) {
 		return p.svc.ContactGroups.Create(&people.CreateContactGroupRequest{
 			ContactGroup:    &people.ContactGroup{Name: name},
 			ReadGroupFields: groupFields,
@@ -239,7 +241,7 @@ func (p *peopleClient) ModifyMembers(ctx context.Context, group string, add, rem
 	if err != nil {
 		return err
 	}
-	resp, err := observe(ctx, p, opModifyMembers, func() (*people.ModifyContactGroupMembersResponse, error) {
+	resp, err := authed(ctx, p, opModifyMembers, func() (*people.ModifyContactGroupMembersResponse, error) {
 		return p.svc.ContactGroups.Members.Modify(resourceName, &people.ModifyContactGroupMembersRequest{
 			ResourceNamesToAdd:    add,
 			ResourceNamesToRemove: remove,
@@ -279,16 +281,34 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 // retryRead runs an idempotent read, retrying it once on a Google 5xx.
 // Each attempt is observed separately.
 func retryRead[T any](ctx context.Context, p *peopleClient, op string, call func() (T, error)) (T, error) {
-	v, err := observe(ctx, p, op, call)
+	v, err := authed(ctx, p, op, call)
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) && gerr.Code >= http.StatusInternalServerError && ctx.Err() == nil {
-		v, err = observe(ctx, p, op, call)
+		v, err = authed(ctx, p, op, call)
 	}
 	if err != nil {
 		var zero T
 		return zero, mapError(op, err)
 	}
 	return v, nil
+}
+
+// authed runs one People API call and, when Google answers 401, refreshes
+// the user's token and runs the call once more. A revoked grant makes that
+// refresh fail with invalid_grant, which deletes the user, so the user's data
+// goes the next time they use the connector after revoking access. Google
+// applies nothing on a 401, so repeating a write here cannot apply it twice.
+// A second 401 is returned as is: the grant may still be live.
+func authed[T any](ctx context.Context, p *peopleClient, op string, call func() (T, error)) (T, error) {
+	v, err := observe(ctx, p, op, call)
+	if callStatus(err) != http.StatusUnauthorized || p.tokens == nil || ctx.Err() != nil {
+		return v, err
+	}
+	if ferr := p.tokens.forceRefresh(); ferr != nil {
+		var zero T
+		return zero, ferr
+	}
+	return observe(ctx, p, op, call)
 }
 
 // observe runs one People API call and reports its method, HTTP status and

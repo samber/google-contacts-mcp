@@ -50,6 +50,10 @@ const (
 	// grant mid-refresh; a second change in the same instant is not worth
 	// waiting for.
 	maxRefreshAttempts = 2
+	// maxForcedFlights allows one more refresh flight when a forced refresh
+	// joined a flight started without the rejected token, which can hand
+	// that same token back.
+	maxForcedFlights = 2
 )
 
 // Scopes are the Google scopes requested at consent: identity to map the user
@@ -160,20 +164,23 @@ func (u *Upstream) People(ctx context.Context, userID string) (contacts.People, 
 	if err != nil {
 		return nil, err
 	}
-	src := &userTokenSource{up: u, userID: userID, ctx: context.WithoutCancel(ctx)}
+	src := &clientTokenSource{
+		tok:  tok,
+		base: &userTokenSource{up: u, userID: userID, ctx: context.WithoutCancel(ctx)},
+	}
 	base := u.http.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
 	client := &http.Client{
-		Transport: &oauth2.Transport{Source: oauth2.ReuseTokenSource(tok, src), Base: base},
+		Transport: &oauth2.Transport{Source: src, Base: base},
 		Timeout:   u.http.Timeout,
 	}
 	svc, err := people.NewService(ctx, option.WithEndpoint(u.peopleURL), option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("google people client: %w", err)
 	}
-	return &peopleClient{svc: svc, userID: userID, warmed: &u.warmed, onCall: u.onCall}, nil
+	return &peopleClient{svc: svc, userID: userID, warmed: &u.warmed, onCall: u.onCall, tokens: src}, nil
 }
 
 // oauthContext makes the oauth2 package use u.http for token requests.
@@ -193,17 +200,19 @@ func (u *Upstream) loadToken(ctx context.Context, userID string) (*oauth2.Token,
 	return &oauth2.Token{AccessToken: t.AccessToken, RefreshToken: t.RefreshToken, Expiry: t.Expiry, TokenType: tokenTypeBearer}, nil
 }
 
-// refresh refreshes userID's access token and stores the result. Each attempt
+// refresh refreshes userID's access token and stores the result. A non-empty
+// rejected names an access token Google refused: a stored token equal to it
+// is refreshed even though it has not expired. Each attempt
 // re-reads the store first: a refresh or a new consent that finished just
 // before already left a valid token there. The store is only changed while
 // it still holds the refresh token this attempt used, so a new consent that
 // lands mid-refresh is never overwritten or deleted; the next attempt then
 // picks up the newer grant.
-func (u *Upstream) refresh(ctx context.Context, userID string) (*oauth2.Token, error) {
+func (u *Upstream) refresh(ctx context.Context, userID, rejected string) (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
 	for range maxRefreshAttempts {
-		tok, done, err := u.refreshOnce(ctx, userID)
+		tok, done, err := u.refreshOnce(ctx, userID, rejected)
 		if err != nil || done {
 			return tok, err
 		}
@@ -213,12 +222,12 @@ func (u *Upstream) refresh(ctx context.Context, userID string) (*oauth2.Token, e
 
 // refreshOnce runs one refresh attempt. done is false when the stored grant
 // changed during the attempt and the caller should try again.
-func (u *Upstream) refreshOnce(ctx context.Context, userID string) (tok *oauth2.Token, done bool, err error) {
+func (u *Upstream) refreshOnce(ctx context.Context, userID, rejected string) (tok *oauth2.Token, done bool, err error) {
 	stored, err := u.loadToken(ctx, userID)
 	if err != nil {
 		return nil, true, err
 	}
-	if stored.Valid() {
+	if stored.Valid() && (rejected == "" || stored.AccessToken != rejected) {
 		return stored, true, nil
 	}
 	fresh, err := u.oauth.TokenSource(u.oauthContext(ctx), &oauth2.Token{RefreshToken: stored.RefreshToken}).Token()
@@ -284,8 +293,31 @@ func (s *userTokenSource) Token() (*oauth2.Token, error) {
 	if tok.Valid() {
 		return tok, nil
 	}
+	return s.shared("")
+}
+
+// forceRefresh returns a token other than rejected, the access token Google
+// just refused, refreshing it when the store still holds it. A refresh that
+// finds the grant revoked deletes the user and returns
+// contacts.ErrUpstreamAuth.
+func (s *userTokenSource) forceRefresh(rejected string) (*oauth2.Token, error) {
+	for range maxForcedFlights {
+		tok, err := s.shared(rejected)
+		if err != nil {
+			return nil, err
+		}
+		if tok.AccessToken != rejected {
+			return tok, nil
+		}
+	}
+	return nil, contacts.ErrUpstreamAuth
+}
+
+// shared runs the refresh in the user's single flight, so concurrent callers
+// in this process share one call to Google.
+func (s *userTokenSource) shared(rejected string) (*oauth2.Token, error) {
 	v, err, _ := s.up.refreshes.Do(s.userID, func() (any, error) {
-		return s.up.refresh(s.ctx, s.userID)
+		return s.up.refresh(s.ctx, s.userID, rejected)
 	})
 	if err != nil {
 		return nil, err
@@ -294,8 +326,48 @@ func (s *userTokenSource) Token() (*oauth2.Token, error) {
 	if !ok {
 		return nil, fmt.Errorf("google token refresh: unexpected result %T", v)
 	}
-	// Every caller of the flight gets the same pointer, and
-	// oauth2.ReuseTokenSource writes into the token it receives.
+	// Every caller of the flight gets the same pointer; each gets a copy so
+	// no caller can change another's token.
 	cp := *shared
 	return &cp, nil
+}
+
+// clientTokenSource caches the token of one People client and replaces it
+// when Google rejects it. It stands in for oauth2.ReuseTokenSource, which
+// cannot drop a token before its expiry.
+type clientTokenSource struct {
+	mu   sync.Mutex
+	tok  *oauth2.Token
+	base *userTokenSource
+}
+
+// Token implements oauth2.TokenSource.
+func (c *clientTokenSource) Token() (*oauth2.Token, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.tok.Valid() {
+		tok, err := c.base.Token()
+		if err != nil {
+			return nil, err
+		}
+		c.tok = tok
+	}
+	cp := *c.tok
+	return &cp, nil
+}
+
+// forceRefresh replaces the cached token after Google answered 401 to it.
+func (c *clientTokenSource) forceRefresh() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rejected := ""
+	if c.tok != nil {
+		rejected = c.tok.AccessToken
+	}
+	tok, err := c.base.forceRefresh(rejected)
+	if err != nil {
+		return err
+	}
+	c.tok = tok
+	return nil
 }

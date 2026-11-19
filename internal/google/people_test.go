@@ -84,7 +84,7 @@ func TestErrorMapping(t *testing.T) {
 		{name: "400 failedPrecondition update", route: routeUpdate, code: 400, status: "FAILED_PRECONDITION", call: updateC1, wantIs: contacts.ErrConflict, wantHits: 1},
 		{name: "429 with Retry-After", route: routeGet, code: 429, status: "RESOURCE_EXHAUSTED", header: map[string]string{"Retry-After": "7"}, call: getC1, wantRetry: 7 * time.Second, wantHits: 1},
 		{name: "429 default Retry-After", route: routeGet, code: 429, status: "RESOURCE_EXHAUSTED", call: getC1, wantRetry: 30 * time.Second, wantHits: 1},
-		{name: "401 get", route: routeGet, code: 401, status: "UNAUTHENTICATED", call: getC1, wantIs: contacts.ErrUpstreamAuth, wantHits: 1},
+		{name: "401 get refreshed and retried once", route: routeGet, code: 401, status: "UNAUTHENTICATED", call: getC1, wantIs: contacts.ErrUpstreamAuth, wantHits: 2},
 		{name: "503 get retried once", route: routeGet, code: 503, status: "UNAVAILABLE", call: getC1, wantHits: 2},
 		{name: "503 create not retried", route: routeCreate, code: 503, status: "UNAVAILABLE", call: createOne, wantHits: 1},
 		{name: "400 other update", route: routeUpdate, code: 400, status: "INVALID_ARGUMENT", call: updateC1, wantHits: 1},
