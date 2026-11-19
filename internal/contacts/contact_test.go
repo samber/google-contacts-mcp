@@ -218,6 +218,31 @@ func TestToPerson_PreservesNameSubfields(t *testing.T) {
 	}
 }
 
+func TestToPerson_ClearsUnstructuredNameOnRename(t *testing.T) {
+	fetched := &people.Person{Names: []*people.Name{{
+		GivenName: "Ada", FamilyName: "Lovelace", UnstructuredName: "Ada Lovelace",
+	}}}
+	cases := []struct {
+		name, given, family, want string
+	}{
+		{name: "unchanged keeps it", given: "Ada", family: "Lovelace", want: "Ada Lovelace"},
+		{name: "given changed", given: "Augusta", family: "Lovelace"},
+		{name: "family changed", given: "Ada", family: "King"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := FromPerson(fetched)
+			c.GivenName, c.FamilyName = tc.given, tc.family
+			if got := c.ToPerson().Names[0].UnstructuredName; got != tc.want {
+				t.Errorf("UnstructuredName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if fetched.Names[0].UnstructuredName != "Ada Lovelace" {
+		t.Error("ToPerson mutated the fetched person")
+	}
+}
+
 func TestToPerson_ReusesMatchingAddressEntry(t *testing.T) {
 	c := FromPerson(&people.Person{Addresses: []*people.Address{{
 		FormattedValue: "1 Main St, London", ExtendedAddress: "Flat 2", PoBox: "PO 9",

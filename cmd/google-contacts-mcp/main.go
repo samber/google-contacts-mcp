@@ -7,11 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
+	"github.com/samber/google-contacts-mcp/internal/google"
 	"github.com/samber/google-contacts-mcp/internal/store"
 )
 
@@ -114,18 +116,44 @@ func runRekey(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	return err
 }
 
-// runDisconnect deletes a user, found by e-mail or Google sub, with every
-// token stored for them.
+// runDisconnect revokes a user's Google grant and deletes the user, found by
+// e-mail or Google sub, with every token stored for them.
 func runDisconnect(ctx context.Context, cfg config.Config, stdout io.Writer) (err error) {
 	st, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, st.Close()) }()
-	who := cfg.Args[0]
+	up := google.NewUpstream(google.UpstreamConfig{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+	}, st, nil)
+	return disconnectUser(ctx, st, up, cfg.Args[0], stdout)
+}
+
+// revoker revokes a Google token.
+type revoker interface {
+	Revoke(ctx context.Context, token string) error
+}
+
+// disconnectUser revokes the user's refresh token at Google, then deletes the
+// user. A failed revoke only warns: the local data must go regardless, and
+// the user can still revoke from their Google account page.
+func disconnectUser(ctx context.Context, st *store.Store, rv revoker, who string, stdout io.Writer) error {
 	u, err := st.UserBySubOrEmail(ctx, who)
 	if err != nil {
 		return fmt.Errorf("disconnect %q: %w", who, err)
+	}
+	tok, err := st.GoogleToken(ctx, u.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		slog.InfoContext(ctx, "no google token to revoke", "user_id", u.ID)
+	case err != nil:
+		return fmt.Errorf("disconnect %q: %w", who, err)
+	default:
+		if err := rv.Revoke(ctx, tok.RefreshToken); err != nil {
+			slog.WarnContext(ctx, "google revoke failed, deleting user anyway", "user_id", u.ID, "error", err)
+		}
 	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		return fmt.Errorf("disconnect %q: %w", who, err)

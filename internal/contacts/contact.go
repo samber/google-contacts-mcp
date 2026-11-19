@@ -157,6 +157,11 @@ func (c Contact) ToPerson() *people.Person {
 
 	if c.GivenName != "" || c.FamilyName != "" || len(p.Names) > 0 {
 		n := firstOrNew(&p.Names)
+		// UnstructuredName is derived from the structured parts but may win
+		// over them on write, so a stale one would undo a rename.
+		if n.GivenName != c.GivenName || n.FamilyName != c.FamilyName {
+			n.UnstructuredName = ""
+		}
 		n.GivenName, n.FamilyName = c.GivenName, c.FamilyName
 	}
 	if c.Company != "" || c.JobTitle != "" || len(p.Organizations) > 0 {

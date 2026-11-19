@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -161,5 +163,73 @@ func TestRun_Genkey(t *testing.T) {
 	errOut.Reset()
 	if code := run([]string{"genkey", "extra"}, noEnv, &out, &errOut); code != exitFailure {
 		t.Errorf("genkey with args: exit = %d, want %d", code, exitFailure)
+	}
+}
+
+type fakeRevoker struct {
+	revoked []string
+	err     error
+}
+
+func (f *fakeRevoker) Revoke(_ context.Context, token string) error {
+	f.revoked = append(f.revoked, token)
+	return f.err
+}
+
+func TestDisconnectUser(t *testing.T) {
+	cases := []struct {
+		name        string
+		token       bool
+		revokeErr   error
+		wantRevoked []string
+	}{
+		{name: "revokes then deletes", token: true, wantRevoked: []string{"refresh-1"}},
+		{name: "revoke failure still deletes", token: true, revokeErr: errors.New("HTTP 503"), wantRevoked: []string{"refresh-1"}},
+		{name: "no token deletes only", token: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			keys, err := crypto.GenerateKey()
+			if err != nil {
+				t.Fatalf("GenerateKey: %v", err)
+			}
+			kr, err := crypto.ParseKeyring(keys)
+			if err != nil {
+				t.Fatalf("ParseKeyring: %v", err)
+			}
+			st, err := store.Open(ctx, filepath.Join(t.TempDir(), "db.sqlite"), kr)
+			if err != nil {
+				t.Fatalf("store.Open: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := st.Close(); err != nil {
+					t.Errorf("Close: %v", err)
+				}
+			})
+			u, err := st.UpsertUser(ctx, "sub-1", "a@example.com")
+			if err != nil {
+				t.Fatalf("UpsertUser: %v", err)
+			}
+			if tc.token {
+				if err := st.SaveGoogleToken(ctx, u.ID, store.GoogleToken{RefreshToken: "refresh-1", AccessToken: "access-1"}); err != nil {
+					t.Fatalf("SaveGoogleToken: %v", err)
+				}
+			}
+			rv := &fakeRevoker{err: tc.revokeErr}
+			var out bytes.Buffer
+			if err := disconnectUser(ctx, st, rv, "sub-1", &out); err != nil {
+				t.Fatalf("disconnectUser: %v", err)
+			}
+			if !reflect.DeepEqual(rv.revoked, tc.wantRevoked) {
+				t.Errorf("revoked = %q, want %q", rv.revoked, tc.wantRevoked)
+			}
+			if _, err := st.UserBySubOrEmail(ctx, "sub-1"); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("user still present: %v", err)
+			}
+			if got, want := out.String(), "disconnected "+u.ID+"\n"; got != want {
+				t.Errorf("stdout = %q, want %q", got, want)
+			}
+		})
 	}
 }
