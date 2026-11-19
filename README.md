@@ -141,6 +141,8 @@ The server keeps the minimum needed to keep you connected. The home page links t
 | The assistants (OAuth clients) registered with the server                   | Personal data in logs at the default log level (`info`)                         |
 | Sign-ins in progress, which expire after 10 minutes                         |                                                                                 |
 
+This service's use and transfer of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
+
 Your e-mail address is stored in clear, so the operator can find your account when you ask to be disconnected. At `info` level, each tool call logs one line with the tool name, an internal user id, the duration and the status, never the arguments or results.
 
 How to erase everything:

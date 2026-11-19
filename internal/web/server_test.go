@@ -253,6 +253,21 @@ func TestPrivacy_ListsStoredData(t *testing.T) {
 	}
 }
 
+func TestPrivacy_LimitedUseDisclosure(t *testing.T) {
+	h := newHandler(t, nil)
+	body := do(t, h, http.MethodGet, "/privacy", nil).body
+	for _, want := range []string{
+		"This service's use and transfer of information received from Google APIs adheres to the",
+		`href="https://developers.google.com/terms/api-services-user-data-policy"`,
+		"Google API Services User Data Policy</a>, including the Limited Use requirements.",
+	} {
+		// html/template escapes the apostrophe in text.
+		if !strings.Contains(strings.ReplaceAll(body, "&#39;", "'"), want) {
+			t.Errorf("privacy page lacks %q", want)
+		}
+	}
+}
+
 func TestPages_NonGETRejected(t *testing.T) {
 	h := newHandler(t, nil)
 	if res := do(t, h, http.MethodPost, "/privacy", nil); res.status != http.StatusMethodNotAllowed {
