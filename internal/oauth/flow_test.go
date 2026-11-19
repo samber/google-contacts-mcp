@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"golang.org/x/oauth2"
+	"golang.org/x/time/rate"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
@@ -949,4 +950,26 @@ func TestFlow_DomainGmailAllowed(t *testing.T) {
 	e.google.set(func(f *fakeGoogle) { f.email = "alice@googlemail.com" })
 	cp = e.authorize(authorizeParams(newPKCE()))
 	errorPage(t, e.callback(e.approve(cp), cp.cookie), http.StatusForbidden, "googlemail.com", "not allowed")
+}
+
+func TestAuthorize_PendingBudgetSpent(t *testing.T) {
+	e := newEnv(t)
+	e.srv.pendingLimit = newBucket(rate.Every(time.Hour), 1)
+	e.authorize(authorizeParams(newPKCE()))
+	rec := e.get("/oauth/authorize?" + authorizeParams(newPKCE()).Encode())
+	errorPage(t, rec, http.StatusTooManyRequests, "Too many sign-ins")
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("429 page has no Retry-After")
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Error("refused authorize still set a cookie")
+	}
+}
+
+func TestAuthorize_CIMDBudgetSpent(t *testing.T) {
+	e := newEnv(t)
+	e.srv.clients.cimdLimit = newBucket(rate.Every(time.Hour), 0)
+	params := authorizeParams(newPKCE())
+	params.Set("client_id", "https://unknown-client.example.com/client.json")
+	errorPage(t, e.get("/oauth/authorize?"+params.Encode()), http.StatusTooManyRequests, "Too many sign-ins")
 }

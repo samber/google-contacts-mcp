@@ -486,7 +486,7 @@ func TestPurgeUnusedClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := s.PurgeUnusedClients(ctx, testNow.Add(-24*time.Hour))
+	n, err := s.PurgeUnusedClients(ctx, testNow.Add(-24*time.Hour), testNow.Add(-72*time.Hour))
 	if err != nil {
 		t.Fatalf("PurgeUnusedClients: %v", err)
 	}
@@ -500,6 +500,66 @@ func TestPurgeUnusedClients(t *testing.T) {
 	}
 	if _, err := s.ClientByID(ctx, "stale"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("stale client kept: %v", err)
+	}
+}
+
+func TestPurgeUnusedClients_NeverUsed(t *testing.T) {
+	ctx := context.Background()
+	s, _ := setupOAuth(t)
+	// The fixture's own client has an unrelated created_at; drop it.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_clients`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"never-used-old", "never-used-new", "used"} {
+		if err := s.SaveClient(ctx, &OAuthClient{ID: id, Kind: ClientKindDCR}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Created 25 h ago: past a 24 h never-used window, far inside a 180-day one.
+	created := testNow.Add(-25 * time.Hour).Unix()
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE oauth_clients SET created_at = ?, last_used_at = NULL WHERE id IN ('never-used-old', 'used')`,
+		created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE oauth_clients SET last_used_at = ? WHERE id = 'used'`, created+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE oauth_clients SET created_at = ?, last_used_at = NULL WHERE id = 'never-used-new'`,
+		testNow.Add(-23*time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.PurgeUnusedClients(ctx, testNow.Add(-180*24*time.Hour), testNow.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeUnusedClients: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("purged = %d, want 1 (never-used-old)", n)
+	}
+	if _, err := s.ClientByID(ctx, "never-used-old"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("never-used client older than 24 h kept: %v", err)
+	}
+	for _, id := range []string{"never-used-new", "used"} {
+		if _, err := s.ClientByID(ctx, id); err != nil {
+			t.Errorf("client %s purged: %v", id, err)
+		}
+	}
+}
+
+func TestDeleteClient(t *testing.T) {
+	ctx := context.Background()
+	s, _ := setupOAuth(t)
+	if err := s.DeleteClient(ctx, testClientID); err != nil {
+		t.Fatalf("DeleteClient: %v", err)
+	}
+	if _, err := s.ClientByID(ctx, testClientID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("client kept: %v", err)
+	}
+	if err := s.DeleteClient(ctx, "missing"); err != nil {
+		t.Errorf("DeleteClient(missing) = %v, want nil", err)
 	}
 }
 

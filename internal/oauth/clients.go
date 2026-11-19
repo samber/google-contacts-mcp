@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ory/fosite"
 	"golang.org/x/sync/singleflight"
@@ -38,6 +39,21 @@ const (
 	// RFC 7591 §3.2.2 error codes.
 	errInvalidRedirectURI    = "invalid_redirect_uri"
 	errInvalidClientMetadata = "invalid_client_metadata"
+	// errTemporarilyUnavailable is the RFC 6749 code sent with a 429 when the
+	// registration budget is spent.
+	errTemporarilyUnavailable = "temporarily_unavailable"
+
+	// maxRedirectURIs, maxRedirectURIBytes and maxClientNameRunes bound what an
+	// unauthenticated caller can store per client row (DCR or CIMD). Real
+	// clients register one to three short loopback or https URIs and a short
+	// product name.
+	maxRedirectURIs     = 10
+	maxRedirectURIBytes = 2 << 10
+	maxClientNameRunes  = 100
+	// maxStaleness caps how long past its expiry a cached CIMD document is
+	// still served when its host cannot be reached: a week rides out an
+	// outage without trusting a dead client forever.
+	maxStaleness = 7 * 24 * time.Hour
 
 	// RFC 7591 application_type values; "web" is the default when absent.
 	applicationTypeWeb    = "web"
@@ -61,13 +77,20 @@ type ClientResolver struct {
 	f      *CIMDFetcher
 	log    *slog.Logger
 	flight singleflight.Group
+	// dcrLimit and cimdLimit are the global budgets of DCR registrations and
+	// CIMD fetches, the two ways an unauthenticated caller writes a client row.
+	dcrLimit, cimdLimit *bucket
 	// now is replaced in tests.
 	now func() time.Time
 }
 
 // NewClientResolver returns a resolver backed by st and f.
 func NewClientResolver(st *store.Store, f *CIMDFetcher) *ClientResolver {
-	return &ClientResolver{st: st, f: f, log: slog.Default(), now: time.Now}
+	return &ClientResolver{
+		st: st, f: f, log: slog.Default(), now: time.Now,
+		dcrLimit:  newBucket(clientCreateRate, clientCreateBurst),
+		cimdLimit: newBucket(clientCreateRate, clientCreateBurst),
+	}
 }
 
 // GetClient implements fosite.ClientManager's lookup. Unknown non-URL ids
@@ -106,6 +129,9 @@ func (r *ClientResolver) cimdClient(ctx context.Context, id string) (fosite.Clie
 	// fetch must not die with whichever caller started it; the fetcher's own
 	// timeout still bounds it.
 	v, err, _ := r.flight.Do(id, func() (any, error) {
+		if ok, _ := r.cimdLimit.take(r.now()); !ok {
+			return nil, ErrClientRateLimited
+		}
 		c, _, ferr := r.f.Fetch(context.WithoutCancel(ctx), id)
 		if ferr != nil {
 			return nil, ferr
@@ -116,20 +142,39 @@ func (r *ClientResolver) cimdClient(ctx context.Context, id string) (fosite.Clie
 		return c, nil
 	})
 	if err != nil {
-		if cached != nil {
-			// A transient outage at the client's host must not break token
-			// refresh for already-connected users.
-			r.log.WarnContext(ctx, "serving stale client metadata after refetch failure",
-				slog.String("client_id", id), slog.Any("error", err))
-			return cached, nil
-		}
-		return nil, fmt.Errorf("oauth: resolve client %q: %w", id, err)
+		return r.afterFetchFailure(ctx, id, cached, err)
 	}
 	c, ok := v.(*store.OAuthClient)
 	if !ok {
 		return nil, fmt.Errorf("oauth: resolve client %q: unexpected %T", id, v)
 	}
 	return c, nil
+}
+
+// afterFetchFailure decides what a failed CIMD (re)fetch yields. A transient
+// failure (outage, timeout, spent fetch budget) serves the cached document for
+// up to maxStaleness past its expiry, so token refresh keeps working for
+// connected users. A definitive answer from the client's host (404, 410, 400)
+// means the document is gone: the cached row is deleted and the client fails.
+func (r *ClientResolver) afterFetchFailure(ctx context.Context, id string, cached *store.OAuthClient, err error) (fosite.Client, error) {
+	var se *fetchStatusError
+	if errors.As(err, &se) && se.definitive() {
+		if cached != nil {
+			if derr := r.st.DeleteClient(context.WithoutCancel(ctx), id); derr != nil {
+				r.log.ErrorContext(ctx, "oauth: delete withdrawn client metadata",
+					slog.String("client_id", id), slog.Any("error", derr))
+			}
+			r.log.InfoContext(ctx, "oauth: client metadata withdrawn, cached copy deleted",
+				slog.String("client_id", id), slog.Int("status", se.status))
+		}
+		return nil, fmt.Errorf("oauth: resolve client %q: %w", id, err)
+	}
+	if cached != nil && r.now().Before(cached.ExpiresAt.Add(maxStaleness)) {
+		r.log.WarnContext(ctx, "serving stale client metadata after refetch failure",
+			slog.String("client_id", id), slog.Any("error", err))
+		return cached, nil
+	}
+	return nil, fmt.Errorf("oauth: resolve client %q: %w", id, err)
 }
 
 // RedirectMatches reports whether got equals a registered redirect URI. For
@@ -208,8 +253,16 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 		r.writeError(w, req, errInvalidClientMetadata, "request body is not a JSON object")
 		return
 	}
+	in.ClientName = strings.TrimSpace(in.ClientName)
 	if code, desc := validateRegistration(&in); code != "" {
 		r.writeError(w, req, code, desc)
+		return
+	}
+	if ok, retry := r.dcrLimit.take(r.now()); !ok {
+		r.log.WarnContext(req.Context(), "dcr: registration budget spent, refusing")
+		w.Header().Set(headerRetryAfter, retryAfterValue(retry))
+		r.writeJSON(w, req, http.StatusTooManyRequests, registrationError{
+			Error: errTemporarilyUnavailable, Description: "too many registrations, retry later"})
 		return
 	}
 
@@ -270,10 +323,19 @@ func validateRegistration(in *registrationRequest) (code, desc string) {
 			return errInvalidClientMetadata, fmt.Sprintf("unsupported response_type %q", rt)
 		}
 	}
+	if utf8.RuneCountInString(in.ClientName) > maxClientNameRunes {
+		return errInvalidClientMetadata, fmt.Sprintf("client_name must be at most %d characters", maxClientNameRunes)
+	}
 	if len(in.RedirectURIs) == 0 {
 		return errInvalidRedirectURI, "redirect_uris is required"
 	}
+	if len(in.RedirectURIs) > maxRedirectURIs {
+		return errInvalidRedirectURI, fmt.Sprintf("at most %d redirect_uris are accepted", maxRedirectURIs)
+	}
 	for _, ru := range in.RedirectURIs {
+		if len(ru) > maxRedirectURIBytes {
+			return errInvalidRedirectURI, fmt.Sprintf("each redirect_uri must be at most %d bytes", maxRedirectURIBytes)
+		}
 		u, err := url.Parse(ru)
 		if err != nil || !u.IsAbs() || u.Hostname() == "" || u.Fragment != "" || strings.Contains(ru, "#") {
 			return errInvalidRedirectURI, fmt.Sprintf("redirect_uri %q must be an absolute URI without fragment", ru)

@@ -128,6 +128,8 @@ type page struct {
 	Message string
 	// RetryURL is our own authorize URL; empty for no retry link.
 	RetryURL string
+	// retryAfter, when set, is sent as Retry-After.
+	retryAfter time.Duration
 }
 
 var (
@@ -142,6 +144,13 @@ var (
 	pageEmailUnverified = &page{status: http.StatusForbidden, Title: "E-mail not verified",
 		Message: "Your Google account e-mail address is not verified."}
 )
+
+// busyPage is shown when a global sign-in budget is spent.
+func busyPage(retry time.Duration) *page {
+	return &page{status: http.StatusTooManyRequests, Title: "Too many sign-ins",
+		Message:    "The server is receiving too many sign-in requests. Wait a moment, then start again from your assistant.",
+		retryAfter: retry}
+}
 
 // authorize serves GET /oauth/authorize: it validates the request and shows
 // the consent page.
@@ -158,6 +167,13 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The pending row is written without authentication, so a global budget
+	// bounds how fast anyone can fill the table.
+	if ok, retry := s.pendingLimit.take(s.now()); !ok {
+		s.log.WarnContext(ctx, "oauth: authorization budget spent, refusing")
+		s.renderError(w, r, busyPage(retry))
+		return
+	}
 	id, err := randomToken()
 	if err != nil {
 		s.fail(w, r, "generate pending id", err)
@@ -344,6 +360,10 @@ func (s *Server) parseAuthorize(ctx context.Context, form url.Values) (fosite.Au
 	}
 	clientID := form.Get(paramClientID)
 	client, err := s.clients.GetClient(ctx, clientID)
+	if errors.Is(err, ErrClientRateLimited) {
+		s.log.WarnContext(ctx, "oauth: client metadata fetch budget spent", slog.String("client_id", clientID))
+		return nil, busyPage(minRetryAfter), nil
+	}
 	if err != nil {
 		s.log.InfoContext(ctx, "oauth: unknown client", slog.String("client_id", clientID), slog.Any("error", err))
 		return nil, &page{status: http.StatusBadRequest, Title: "Unknown application",
@@ -455,7 +475,7 @@ func grantedContacts(tok *oauth2.Token) bool {
 	return slices.Contains(strings.Fields(scope), google.ScopeContacts)
 }
 
-// domainAllowed checks --allowed-domains (ruling 22). The hd claim is the
+// domainAllowed checks --allowed-domains (spec §6.3). The hd claim is the
 // only proof of a Workspace domain: anyone can create a consumer Google
 // account on any e-mail address, so a bare e-mail domain counts only for
 // domains Google itself issues addresses on. It returns the domain to name
@@ -591,6 +611,9 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, op string, err err
 }
 
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, pg *page) {
+	if pg.retryAfter > 0 {
+		w.Header().Set(headerRetryAfter, retryAfterValue(pg.retryAfter))
+	}
 	s.render(w, r, pg.status, tmplError, pg)
 }
 

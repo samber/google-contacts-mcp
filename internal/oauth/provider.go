@@ -96,6 +96,8 @@ type Server struct {
 	metrics      *obs.Metrics
 	now          func() time.Time
 	templates    *template.Template
+	// pendingLimit is the global budget of pending authorizations.
+	pendingLimit *bucket
 
 	issuer         string
 	resource       string
@@ -127,6 +129,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		metrics:        deps.Metrics,
 		now:            deps.Now,
 		templates:      tmpl,
+		pendingLimit:   newBucket(pendingRate, pendingBurst),
 		issuer:         issuer,
 		resource:       issuer + mcpPath,
 		enableDCR:      cfg.EnableDCR,

@@ -6,15 +6,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ory/fosite"
+	"golang.org/x/time/rate"
 
 	"github.com/samber/google-contacts-mcp/internal/crypto"
 	"github.com/samber/google-contacts-mcp/internal/store"
@@ -263,6 +266,12 @@ func TestRegister_Rejects(t *testing.T) {
 		{"bad response type", `{"redirect_uris": ["https://app.example.com/cb"], "response_types": ["token"]}`, "invalid_client_metadata"},
 		{"malformed json", `{"redirect_uris": [`, "invalid_client_metadata"},
 		{"too large", `{"client_name": "` + strings.Repeat("x", int(maxRegistrationBody)) + `"}`, "invalid_client_metadata"},
+		{"too many redirect uris", `{"redirect_uris": [` + strings.Repeat(`"https://app.example.com/cb",`, maxRedirectURIs) +
+			`"https://app.example.com/cb"]}`, "invalid_redirect_uri"},
+		{"redirect uri too long", `{"redirect_uris": ["https://app.example.com/` + strings.Repeat("a", maxRedirectURIBytes) + `"]}`,
+			"invalid_redirect_uri"},
+		{"client name too long", `{"redirect_uris": ["https://app.example.com/cb"], "client_name": "` +
+			strings.Repeat("é", maxClientNameRunes+1) + `"}`, "invalid_client_metadata"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -304,5 +313,151 @@ func assertRegisterError(t *testing.T, rec *httptest.ResponseRecorder, wantErr s
 	}
 	if body.Error != wantErr || body.Description == "" {
 		t.Errorf("error = %+v, want %q", body, wantErr)
+	}
+}
+
+func TestRegister_LimitsAtBoundary(t *testing.T) {
+	r := NewClientResolver(openStore(t), NewCIMDFetcher(CIMDOptions{}))
+	uris := make([]string, maxRedirectURIs)
+	for i := range uris {
+		uris[i] = fmt.Sprintf("https://app.example.com/%s%d", strings.Repeat("a", maxRedirectURIBytes-40), i)
+	}
+	body, err := json.Marshal(map[string]any{
+		"redirect_uris": uris,
+		// Surrounding blanks are trimmed before counting.
+		"client_name": "  " + strings.Repeat("é", maxClientNameRunes) + "  ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postRegister(t, r, string(body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"client_name":"`+strings.Repeat("é", maxClientNameRunes)+`"`)) {
+		t.Errorf("client_name not trimmed: %s", rec.Body)
+	}
+}
+
+func TestRegister_BudgetSpentReturns429(t *testing.T) {
+	st := openStore(t)
+	r := NewClientResolver(st, NewCIMDFetcher(CIMDOptions{}))
+	r.now = func() time.Time { return fetchNow }
+	r.dcrLimit = newBucket(rate.Every(time.Hour), 1)
+	if rec := postRegister(t, r, `{"redirect_uris": ["https://app.example.com/cb"]}`); rec.Code != http.StatusCreated {
+		t.Fatalf("first status = %d, body %s", rec.Code, rec.Body)
+	}
+	rec := postRegister(t, r, `{"redirect_uris": ["https://app.example.com/cb"]}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429, body %s", rec.Code, rec.Body)
+	}
+	if ra, err := strconv.Atoi(rec.Header().Get("Retry-After")); err != nil || ra < 1 {
+		t.Errorf("Retry-After = %q, want a positive number of seconds", rec.Header().Get("Retry-After"))
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Error != errTemporarilyUnavailable {
+		t.Errorf("body = %s (%v), want error %q", rec.Body, err, errTemporarilyUnavailable)
+	}
+	// An invalid request is refused before it spends budget.
+	assertRegisterError(t, postRegister(t, r, `{}`), "invalid_redirect_uri")
+}
+
+// cimdServer serves a valid metadata document, or status when it is non-zero.
+func cimdServer(t *testing.T) (*httptest.Server, *atomic.Int32, *atomic.Int64) {
+	t.Helper()
+	var hits atomic.Int32
+	var status atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if s := status.Load(); s != 0 {
+			w.WriteHeader(int(s))
+			return
+		}
+		w.Header().Set("Cache-Control", "max-age=60")
+		writeJSON(t, w, docFor(r))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits, &status
+}
+
+func TestGetClient_CIMDBudgetSpent(t *testing.T) {
+	srv, hits, _ := cimdServer(t)
+	now := fetchNow
+	f := newTestFetcher(t, srv, CIMDOptions{AllowPrivate: true})
+	f.now = func() time.Time { return now }
+	r := NewClientResolver(openStore(t), f)
+	r.now = func() time.Time { return now }
+	r.cimdLimit = newBucket(rate.Every(time.Hour), 1)
+	ctx := context.Background()
+	id := srv.URL + testDocPath
+
+	if _, err := r.GetClient(ctx, id); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	// A cold lookup of another client finds the budget spent and fetches nothing.
+	if _, err := r.GetClient(ctx, srv.URL+"/other.json"); !errors.Is(err, ErrClientRateLimited) {
+		t.Fatalf("cold lookup err = %v, want ErrClientRateLimited", err)
+	}
+	// An expired cached client is served stale instead of refetched.
+	now = now.Add(2 * time.Minute)
+	if c, err := r.GetClient(ctx, id); err != nil || c.GetID() != id {
+		t.Fatalf("stale lookup = %v, %v, want the cached client", c, err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1: a spent budget must not fetch", got)
+	}
+}
+
+func TestGetClient_CIMDDefinitiveFailureDeletesCache(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusGone, http.StatusBadRequest} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			srv, _, status := cimdServer(t)
+			now := fetchNow
+			f := newTestFetcher(t, srv, CIMDOptions{AllowPrivate: true})
+			f.now = func() time.Time { return now }
+			st := openStore(t)
+			r := NewClientResolver(st, f)
+			r.now = func() time.Time { return now }
+			ctx := context.Background()
+			id := srv.URL + testDocPath
+			if _, err := r.GetClient(ctx, id); err != nil {
+				t.Fatalf("first fetch: %v", err)
+			}
+			now = now.Add(2 * time.Minute)
+			status.Store(int64(code))
+			if _, err := r.GetClient(ctx, id); err == nil {
+				t.Fatal("withdrawn client still served from cache")
+			}
+			if _, err := st.ClientByID(ctx, id); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("cached row kept: %v", err)
+			}
+		})
+	}
+}
+
+func TestGetClient_CIMDStalenessCapped(t *testing.T) {
+	srv, _, status := cimdServer(t)
+	now := fetchNow
+	f := newTestFetcher(t, srv, CIMDOptions{AllowPrivate: true})
+	f.now = func() time.Time { return now }
+	r := NewClientResolver(openStore(t), f)
+	r.now = func() time.Time { return now }
+	ctx := context.Background()
+	id := srv.URL + testDocPath
+	if _, err := r.GetClient(ctx, id); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	status.Store(http.StatusServiceUnavailable)
+	expiry := fetchNow.Add(time.Minute)
+
+	now = expiry.Add(maxStaleness - time.Second)
+	if _, err := r.GetClient(ctx, id); err != nil {
+		t.Fatalf("stale copy inside the cap not served: %v", err)
+	}
+	now = expiry.Add(maxStaleness + time.Second)
+	if _, err := r.GetClient(ctx, id); err == nil {
+		t.Fatal("stale copy served past the cap")
 	}
 }

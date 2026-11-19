@@ -20,6 +20,10 @@ const (
 	// inactivityWindow is the 180-day inactivity limit of spec §10; it also
 	// matches the refresh token lifetime, so a purged user holds no live grant.
 	inactivityWindow = 180 * 24 * time.Hour
+	// neverUsedClientWindow purges clients that never obtained a token after a
+	// day: anyone can create them without authenticating (DCR, CIMD lookups),
+	// and a real client finishes its first sign-in within minutes.
+	neverUsedClientWindow = 24 * time.Hour
 )
 
 // Revoker revokes a Google token; *google.Upstream implements it.
@@ -74,7 +78,7 @@ func purge(ctx context.Context, st *store.Store, rv Revoker, now func() time.Tim
 		purgeUser(ctx, st, rv, u.ID)
 	}
 
-	n, err := st.PurgeUnusedClients(ctx, cutoff)
+	n, err := st.PurgeUnusedClients(ctx, cutoff, now().Add(-neverUsedClientWindow))
 	if err != nil {
 		logError(ctx, "jobs: purge unused clients", err)
 		return

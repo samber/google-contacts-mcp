@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samber/google-contacts-mcp/internal/store"
 )
@@ -48,6 +49,19 @@ const (
 // ErrForbiddenAddress reports a metadata URL or redirect that resolves to a
 // non-public address (SSRF guard).
 var ErrForbiddenAddress = errors.New("oauth: client metadata host resolves to a non-public address")
+
+// fetchStatusError reports a metadata document answered with a non-200 status.
+type fetchStatusError struct{ status int }
+
+func (e *fetchStatusError) Error() string {
+	return fmt.Sprintf("oauth: fetch client metadata: status %d", e.status)
+}
+
+// definitive reports a status meaning the document is gone or the request is
+// wrong, not a passing outage: retrying later will not bring it back.
+func (e *fetchStatusError) definitive() bool {
+	return e.status == http.StatusNotFound || e.status == http.StatusGone || e.status == http.StatusBadRequest
+}
 
 // nonPublicPrefixes lists ranges netip's Is* predicates do not cover.
 var nonPublicPrefixes = []netip.Prefix{
@@ -185,7 +199,7 @@ func (f *CIMDFetcher) Fetch(ctx context.Context, clientID string) (*store.OAuthC
 	defer func() { _ = resp.Body.Close() }() // read-only body; a close error changes nothing
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, time.Time{}, fmt.Errorf("oauth: fetch client metadata: status %d", resp.StatusCode)
+		return nil, time.Time{}, &fetchStatusError{status: resp.StatusCode}
 	}
 	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mt != mediaTypeJSON {
@@ -210,7 +224,7 @@ func (f *CIMDFetcher) Fetch(ctx context.Context, clientID string) (*store.OAuthC
 	if err := validateDocument(clientID, &doc); err != nil {
 		return nil, time.Time{}, err
 	}
-	name := doc.ClientName
+	name := strings.TrimSpace(doc.ClientName)
 	if name == "" {
 		name = u.Hostname()
 	}
@@ -259,10 +273,19 @@ func validateDocument(clientID string, doc *clientMetadataDocument) error {
 		return fmt.Errorf("oauth: client metadata: token_endpoint_auth_method %q not supported, only %q",
 			doc.TokenEndpointAuthMethod, authMethodNone)
 	}
+	if utf8.RuneCountInString(strings.TrimSpace(doc.ClientName)) > maxClientNameRunes {
+		return fmt.Errorf("oauth: client metadata: client_name longer than %d characters", maxClientNameRunes)
+	}
 	if len(doc.RedirectURIs) == 0 {
 		return errors.New("oauth: client metadata: redirect_uris is empty")
 	}
+	if len(doc.RedirectURIs) > maxRedirectURIs {
+		return fmt.Errorf("oauth: client metadata: more than %d redirect_uris", maxRedirectURIs)
+	}
 	for _, r := range doc.RedirectURIs {
+		if len(r) > maxRedirectURIBytes {
+			return fmt.Errorf("oauth: client metadata: a redirect_uri is longer than %d bytes", maxRedirectURIBytes)
+		}
 		u, err := url.Parse(r)
 		if err != nil || !u.IsAbs() || u.Fragment != "" {
 			return fmt.Errorf("oauth: client metadata: redirect_uri %q is not an absolute URI without fragment", r)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -246,6 +247,19 @@ func TestFetch_RejectsBadDocuments(t *testing.T) {
 		{"empty redirect uris", func(d map[string]any) { d["redirect_uris"] = []string{} }, ""},
 		{"relative redirect uri", func(d map[string]any) { d["redirect_uris"] = []string{"/callback"} }, ""},
 		{"not json", func(map[string]any) {}, "text/html"},
+		{"too many redirect uris", func(d map[string]any) {
+			uris := make([]string, maxRedirectURIs+1)
+			for i := range uris {
+				uris[i] = fmt.Sprintf("https://client.example.com/cb%d", i)
+			}
+			d["redirect_uris"] = uris
+		}, ""},
+		{"redirect uri too long", func(d map[string]any) {
+			d["redirect_uris"] = []string{"https://client.example.com/" + strings.Repeat("a", maxRedirectURIBytes)}
+		}, ""},
+		{"client name too long", func(d map[string]any) {
+			d["client_name"] = strings.Repeat("é", maxClientNameRunes+1)
+		}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

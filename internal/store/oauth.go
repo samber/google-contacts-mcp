@@ -157,6 +157,14 @@ func (s *Store) ClientByID(ctx context.Context, id string) (*OAuthClient, error)
 	return c, nil
 }
 
+// DeleteClient removes a client row; a missing row is not an error.
+func (s *Store) DeleteClient(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_clients WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: delete client: %w", err)
+	}
+	return nil
+}
+
 // GetClient implements fosite.ClientManager.
 func (s *Store) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	c, err := s.ClientByID(ctx, id)
@@ -176,16 +184,20 @@ func (s *Store) ClientAssertionJWTValid(context.Context, string) error { return 
 // SetClientAssertionJWT implements fosite.ClientManager; see ClientAssertionJWTValid.
 func (s *Store) SetClientAssertionJWT(context.Context, string, time.Time) error { return nil }
 
-// PurgeUnusedClients deletes clients unused since before, keeping any client
-// that still holds a live token so its refresh tokens keep resolving.
-func (s *Store) PurgeUnusedClients(ctx context.Context, before time.Time) (int, error) {
+// PurgeUnusedClients deletes clients last used before usedBefore, and clients
+// never used at all and created before neverUsedBefore, keeping any client
+// that still holds a live token so its refresh tokens keep resolving. The
+// shorter never-used window bounds the rows that unauthenticated DCR
+// registrations and CIMD lookups can leave behind.
+func (s *Store) PurgeUnusedClients(ctx context.Context, usedBefore, neverUsedBefore time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx, `
 		DELETE FROM oauth_clients
-		WHERE coalesce(last_used_at, created_at) < ?
+		WHERE (coalesce(last_used_at, created_at) < ?
+		       OR (last_used_at IS NULL AND created_at < ?))
 		  AND NOT EXISTS (
 			SELECT 1 FROM oauth_tokens t
 			WHERE t.client_id = oauth_clients.id AND t.active = 1 AND t.expires_at >= ?)`,
-		before.Unix(), s.now().Unix())
+		usedBefore.Unix(), neverUsedBefore.Unix(), s.now().Unix())
 	if err != nil {
 		return 0, fmt.Errorf("store: purge clients: %w", err)
 	}
