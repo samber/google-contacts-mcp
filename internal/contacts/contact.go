@@ -95,7 +95,10 @@ type People interface {
 }
 
 // FromPerson maps a People API person to a Contact. Single-valued fields come
-// from the first entry of each list, which the API marks as primary.
+// from the first entry owned by the CONTACT source, falling back to the first
+// entry: for a contact linked to a Google profile, the first entry can be the
+// profile's, which updateContact cannot change. Multi-valued fields list
+// every entry, profile ones included, so matching and display see them.
 func FromPerson(p *people.Person) Contact {
 	if p == nil {
 		return Contact{}
@@ -106,15 +109,14 @@ func FromPerson(p *people.Person) Contact {
 	if src := contactSource(p); src != nil && src.Etag != "" {
 		c.Etag = src.Etag
 	}
-	if len(p.Names) > 0 && p.Names[0] != nil {
-		n := p.Names[0]
+	if n := preferContact(p.Names, nameMeta); n != nil {
 		c.GivenName, c.FamilyName, c.DisplayName = n.GivenName, n.FamilyName, n.DisplayName
 	}
-	if len(p.Organizations) > 0 && p.Organizations[0] != nil {
-		c.Company, c.JobTitle = p.Organizations[0].Name, p.Organizations[0].Title
+	if o := preferContact(p.Organizations, orgMeta); o != nil {
+		c.Company, c.JobTitle = o.Name, o.Title
 	}
-	if len(p.Biographies) > 0 && p.Biographies[0] != nil {
-		c.Notes = p.Biographies[0].Value
+	if b := preferContact(p.Biographies, bioMeta); b != nil {
+		c.Notes = b.Value
 	}
 	for _, e := range p.EmailAddresses {
 		if e != nil {
@@ -150,6 +152,11 @@ func FromPerson(p *people.Person) Contact {
 // PO box, ...) and primary flags survive. Multi-valued lists follow the
 // Contact (a value missing from it is dropped). DisplayName is output-only and
 // never sent. Without a fetched person, empty fields produce no entry.
+//
+// Only entries owned by the CONTACT source (or carrying no source) are sent:
+// Google rejects or ignores edits to profile entries, and copying them into
+// the contact would duplicate them. A Contact value that only matches a
+// profile entry is therefore left out rather than created as a contact entry.
 func (c Contact) ToPerson() *people.Person {
 	p := clonePerson(c.raw)
 	if p == nil {
@@ -158,39 +165,61 @@ func (c Contact) ToPerson() *people.Person {
 	p.ResourceName = c.ResourceName
 	p.Metadata = c.sourceMetadata()
 
+	var profileName *people.Name
+	p.Names, profileName = splitOwned(p.Names, nameMeta)
 	if c.GivenName != "" || c.FamilyName != "" || len(p.Names) > 0 {
-		n := firstOrNew(&p.Names)
-		// UnstructuredName is derived from the structured parts but may win
-		// over them on write, so a stale one would undo a rename.
-		if n.GivenName != c.GivenName || n.FamilyName != c.FamilyName {
-			n.UnstructuredName = ""
+		if len(p.Names) > 0 || profileName == nil ||
+			profileName.GivenName != c.GivenName || profileName.FamilyName != c.FamilyName {
+			n := pickOrNew(&p.Names, nameMeta)
+			// UnstructuredName is derived from the structured parts but may win
+			// over them on write, so a stale one would undo a rename.
+			if n.GivenName != c.GivenName || n.FamilyName != c.FamilyName {
+				n.UnstructuredName = ""
+			}
+			n.GivenName, n.FamilyName = c.GivenName, c.FamilyName
 		}
-		n.GivenName, n.FamilyName = c.GivenName, c.FamilyName
 	}
+	var profileOrg *people.Organization
+	p.Organizations, profileOrg = splitOwned(p.Organizations, orgMeta)
 	if c.Company != "" || c.JobTitle != "" || len(p.Organizations) > 0 {
-		o := firstOrNew(&p.Organizations)
-		o.Name, o.Title = c.Company, c.JobTitle
+		if len(p.Organizations) > 0 || profileOrg == nil ||
+			profileOrg.Name != c.Company || profileOrg.Title != c.JobTitle {
+			o := pickOrNew(&p.Organizations, orgMeta)
+			o.Name, o.Title = c.Company, c.JobTitle
+		}
 	}
+	var profileBio *people.Biography
+	p.Biographies, profileBio = splitOwned(p.Biographies, bioMeta)
 	if c.Notes != "" || len(p.Biographies) > 0 {
-		firstOrNew(&p.Biographies).Value = c.Notes
+		if len(p.Biographies) > 0 || profileBio == nil || profileBio.Value != c.Notes {
+			pickOrNew(&p.Biographies, bioMeta).Value = c.Notes
+		}
 	}
 
-	p.EmailAddresses = overlay(p.EmailAddresses, c.Emails, typedOverlay(
+	emails, foreignEmails := splitForeign(p.EmailAddresses, emailMeta)
+	p.EmailAddresses = overlay(emails, c.Emails, foreignKeys(foreignEmails,
+		func(e *people.EmailAddress) string { return emailKey(Typed{Value: e.Value}) }), typedOverlay(
 		func(e *people.EmailAddress) Typed { return Typed{Value: e.Value, Type: e.Type} },
 		func(t Typed) *people.EmailAddress { return &people.EmailAddress{Value: t.Value, Type: t.Type} },
 		func(e *people.EmailAddress, typ string) { e.Type = typ },
 		emailKey))
-	p.PhoneNumbers = overlay(p.PhoneNumbers, c.Phones, typedOverlay(
+	phones, foreignPhones := splitForeign(p.PhoneNumbers, phoneMeta)
+	p.PhoneNumbers = overlay(phones, c.Phones, foreignKeys(foreignPhones,
+		func(e *people.PhoneNumber) string { return phoneKey(Typed{Value: e.Value}) }), typedOverlay(
 		func(e *people.PhoneNumber) Typed { return Typed{Value: e.Value, Type: e.Type} },
 		func(t Typed) *people.PhoneNumber { return &people.PhoneNumber{Value: t.Value, Type: t.Type} },
 		func(e *people.PhoneNumber, typ string) { e.Type = typ },
 		phoneKey))
-	p.Urls = overlay(p.Urls, c.Websites, typedOverlay(
+	urls, foreignURLs := splitForeign(p.Urls, urlMeta)
+	p.Urls = overlay(urls, c.Websites, foreignKeys(foreignURLs,
+		func(e *people.Url) string { return websiteKey(Typed{Value: e.Value}) }), typedOverlay(
 		func(e *people.Url) Typed { return Typed{Value: e.Value, Type: e.Type} },
 		func(t Typed) *people.Url { return &people.Url{Value: t.Value, Type: t.Type} },
 		func(e *people.Url, typ string) { e.Type = typ },
 		websiteKey))
-	p.Addresses = overlay(p.Addresses, c.Addresses, overlayFuncs[*people.Address, Address]{
+	addrs, foreignAddrs := splitForeign(p.Addresses, addressMeta)
+	p.Addresses = overlay(addrs, c.Addresses, foreignKeys(foreignAddrs,
+		func(e *people.Address) string { return addressKey(fromAddress(e)) }), overlayFuncs[*people.Address, Address]{
 		key:     func(e *people.Address) string { return addressKey(fromAddress(e)) },
 		valKey:  addressKey,
 		create:  toAddress,
@@ -303,10 +332,11 @@ func typedOverlay[E any](toTyped func(E) Typed, create func(Typed) E, setType fu
 
 // overlay builds the entry list for values: a value whose key matches an
 // unused raw entry reuses that entry (keeping metadata, primary flag and
-// unmapped sub-fields) with only its type updated; other values become new
+// unmapped sub-fields) with only its type updated; a value matching only a
+// key in foreign (a profile entry) is skipped; other values become new
 // entries; raw entries matching no value are dropped. raw entries must already
 // be private copies, since they are modified in place.
-func overlay[E comparable, V any](raw []E, values []V, f overlayFuncs[E, V]) []E {
+func overlay[E comparable, V any](raw []E, values []V, foreign map[string]bool, f overlayFuncs[E, V]) []E {
 	var zero E
 	var out []E
 	used := make([]bool, len(raw))
@@ -320,7 +350,9 @@ func overlay[E comparable, V any](raw []E, values []V, f overlayFuncs[E, V]) []E
 			}
 		}
 		if idx < 0 {
-			out = append(out, f.create(v))
+			if !foreign[k] {
+				out = append(out, f.create(v))
+			}
 			continue
 		}
 		used[idx] = true
@@ -330,15 +362,102 @@ func overlay[E comparable, V any](raw []E, values []V, f overlayFuncs[E, V]) []E
 	return out
 }
 
-// firstOrNew returns the first entry of *list, creating it when the list is
-// empty or starts with nil.
-func firstOrNew[E any](list *[]*E) *E {
-	if len(*list) == 0 {
-		*list = []*E{new(E)}
-	} else if (*list)[0] == nil {
-		(*list)[0] = new(E)
+// Field metadata accessors, one per People API entry type, so the
+// source-ownership helpers stay generic.
+func nameMeta(e *people.Name) *people.FieldMetadata          { return e.Metadata }
+func orgMeta(e *people.Organization) *people.FieldMetadata   { return e.Metadata }
+func bioMeta(e *people.Biography) *people.FieldMetadata      { return e.Metadata }
+func emailMeta(e *people.EmailAddress) *people.FieldMetadata { return e.Metadata }
+func phoneMeta(e *people.PhoneNumber) *people.FieldMetadata  { return e.Metadata }
+func urlMeta(e *people.Url) *people.FieldMetadata            { return e.Metadata }
+func addressMeta(e *people.Address) *people.FieldMetadata    { return e.Metadata }
+
+// isContactSource reports whether an entry comes from the CONTACT source.
+func isContactSource(m *people.FieldMetadata) bool {
+	return m != nil && m.Source != nil && m.Source.Type == sourceTypeContact
+}
+
+// isOwned reports whether updateContact may send an entry: it comes from the
+// CONTACT source or names no source at all (entries built locally).
+func isOwned(m *people.FieldMetadata) bool {
+	return m == nil || m.Source == nil || m.Source.Type == sourceTypeContact
+}
+
+// pickIndex returns the index of the first non-nil CONTACT-source entry, else
+// of the first non-nil entry, else -1.
+func pickIndex[E any](list []*E, meta func(*E) *people.FieldMetadata) int {
+	first := -1
+	for i, e := range list {
+		if e == nil {
+			continue
+		}
+		if isContactSource(meta(e)) {
+			return i
+		}
+		if first < 0 {
+			first = i
+		}
 	}
-	return (*list)[0]
+	return first
+}
+
+// preferContact returns the entry FromPerson reads single values from.
+func preferContact[E any](list []*E, meta func(*E) *people.FieldMetadata) *E {
+	if i := pickIndex(list, meta); i >= 0 {
+		return list[i]
+	}
+	return nil
+}
+
+// pickOrNew returns the entry ToPerson writes single values to: the one
+// pickIndex selects, or a new first entry when there is none.
+func pickOrNew[E any](list *[]*E, meta func(*E) *people.FieldMetadata) *E {
+	if i := pickIndex(*list, meta); i >= 0 {
+		return (*list)[i]
+	}
+	e := new(E)
+	*list = append([]*E{e}, *list...)
+	return e
+}
+
+// splitOwned keeps the owned entries of list (nil ones included, so the
+// order is kept) and returns the first foreign entry, the value FromPerson
+// fell back to when no owned entry exists.
+func splitOwned[E any](list []*E, meta func(*E) *people.FieldMetadata) ([]*E, *E) {
+	owned, foreign := splitForeign(list, meta)
+	if len(foreign) > 0 {
+		return owned, foreign[0]
+	}
+	return owned, nil
+}
+
+// splitForeign separates owned entries from foreign (profile) ones.
+func splitForeign[E any](list []*E, meta func(*E) *people.FieldMetadata) (owned, foreign []*E) {
+	if list == nil {
+		return nil, nil
+	}
+	for _, e := range list {
+		if e != nil && !isOwned(meta(e)) {
+			foreign = append(foreign, e)
+			continue
+		}
+		owned = append(owned, e)
+	}
+	return owned, foreign
+}
+
+// foreignKeys returns the comparison keys of foreign entries.
+func foreignKeys[E any](foreign []*E, key func(*E) string) map[string]bool {
+	if len(foreign) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(foreign))
+	for _, e := range foreign {
+		if k := key(e); k != "" {
+			out[k] = true
+		}
+	}
+	return out
 }
 
 func fromAddress(a *people.Address) Address {

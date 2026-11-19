@@ -482,3 +482,151 @@ func TestGroupError(t *testing.T) {
 		t.Errorf("upstream = %q", got)
 	}
 }
+
+// profileLinked is a contact linked to a Google profile: the profile's
+// entries come first, as Google lists them, followed by the contact's own.
+func profileLinked() *people.Person {
+	profile := &people.FieldMetadata{Primary: true, Source: &people.Source{Type: "PROFILE", Id: "prof"}}
+	contact := &people.FieldMetadata{Source: &people.Source{Type: sourceTypeContact, Id: "src1"}}
+	return &people.Person{
+		ResourceName: "people/c1",
+		Etag:         "P",
+		Metadata: &people.PersonMetadata{Sources: []*people.Source{
+			{Type: "PROFILE", Id: "prof", Etag: "PE"},
+			{Type: sourceTypeContact, Id: "src1", Etag: "C"},
+		}},
+		Names: []*people.Name{
+			{GivenName: "Profile", FamilyName: "Name", Metadata: profile},
+			{GivenName: "Ada", FamilyName: "Lovelace", Metadata: contact},
+		},
+		Organizations: []*people.Organization{
+			{Name: "Profile Corp", Metadata: profile},
+			{Name: "Acme", Title: "CTO", Metadata: contact},
+		},
+		Biographies: []*people.Biography{
+			{Value: "profile bio", Metadata: profile},
+			{Value: "contact note", Metadata: contact},
+		},
+		EmailAddresses: []*people.EmailAddress{
+			{Value: "ada@profile.example", Metadata: profile},
+			{Value: "ada@example.com", Type: "work", Metadata: contact},
+		},
+		PhoneNumbers: []*people.PhoneNumber{{Value: "+1 555 0100", Metadata: profile}},
+		Urls:         []*people.Url{{Value: "https://profile.example", Metadata: profile}},
+		Addresses:    []*people.Address{{FormattedValue: "Profile Street", Metadata: profile}},
+	}
+}
+
+// assertNoProfileEntry fails when p carries any entry from a non-CONTACT source.
+func assertNoProfileEntry(t *testing.T, p *people.Person) {
+	t.Helper()
+	check := func(field string, m *people.FieldMetadata) {
+		if !isOwned(m) {
+			t.Errorf("%s: sent a %s-source entry", field, m.Source.Type)
+		}
+	}
+	for _, e := range p.Names {
+		check("names", e.Metadata)
+	}
+	for _, e := range p.Organizations {
+		check("organizations", e.Metadata)
+	}
+	for _, e := range p.Biographies {
+		check("biographies", e.Metadata)
+	}
+	for _, e := range p.EmailAddresses {
+		check("emailAddresses", e.Metadata)
+	}
+	for _, e := range p.PhoneNumbers {
+		check("phoneNumbers", e.Metadata)
+	}
+	for _, e := range p.Urls {
+		check("urls", e.Metadata)
+	}
+	for _, e := range p.Addresses {
+		check("addresses", e.Metadata)
+	}
+}
+
+func TestFromPerson_PrefersContactSource(t *testing.T) {
+	c := FromPerson(profileLinked())
+	if c.GivenName != "Ada" || c.FamilyName != "Lovelace" {
+		t.Errorf("name = %q %q, want the CONTACT name Ada Lovelace", c.GivenName, c.FamilyName)
+	}
+	if c.Company != "Acme" || c.JobTitle != "CTO" {
+		t.Errorf("organization = %q/%q, want the CONTACT one Acme/CTO", c.Company, c.JobTitle)
+	}
+	if c.Notes != "contact note" {
+		t.Errorf("notes = %q, want the CONTACT biography", c.Notes)
+	}
+	// Profile values stay visible for matching and display.
+	if len(c.Emails) != 2 || len(c.Phones) != 1 || len(c.Websites) != 1 || len(c.Addresses) != 1 {
+		t.Errorf("multi-valued fields = %d/%d/%d/%d, want 2/1/1/1 incl. profile entries",
+			len(c.Emails), len(c.Phones), len(c.Websites), len(c.Addresses))
+	}
+	// Without a CONTACT entry, the first entry is still read.
+	p := profileLinked()
+	p.Names = p.Names[:1]
+	if got := FromPerson(p).GivenName; got != "Profile" {
+		t.Errorf("fallback name = %q, want Profile", got)
+	}
+}
+
+func TestToPerson_UpdateSendsOnlyContactEntries(t *testing.T) {
+	c := FromPerson(profileLinked())
+	c.GivenName = "Augusta"
+	c.Emails = append(c.Emails, Typed{Value: "new@example.com"})
+	got := c.ToPerson()
+	assertNoProfileEntry(t, got)
+	if len(got.Names) != 1 || got.Names[0].GivenName != "Augusta" || got.Names[0].FamilyName != "Lovelace" {
+		t.Errorf("names = %#v, want the CONTACT entry renamed to Augusta", got.Names)
+	}
+	if len(got.Organizations) != 1 || got.Organizations[0].Name != "Acme" {
+		t.Errorf("organizations = %#v, want only Acme", got.Organizations)
+	}
+	var emails []string
+	for _, e := range got.EmailAddresses {
+		emails = append(emails, e.Value)
+	}
+	if want := []string{"ada@example.com", "new@example.com"}; !reflect.DeepEqual(emails, want) {
+		t.Errorf("emails = %v, want %v", emails, want)
+	}
+	if len(got.PhoneNumbers) != 0 || len(got.Urls) != 0 || len(got.Addresses) != 0 {
+		t.Errorf("profile-only phones/urls/addresses were copied: %#v %#v %#v",
+			got.PhoneNumbers, got.Urls, got.Addresses)
+	}
+}
+
+func TestEnrichThenToPerson_ProfileLinked(t *testing.T) {
+	merged, changed := Enrich(FromPerson(profileLinked()), Contact{
+		// Already on the profile: not added, not copied into the contact.
+		Emails: []Typed{{Value: "ADA@profile.example"}, {Value: "extra@example.com"}},
+		Phones: []Typed{{Value: "+1 555 0100"}, {Value: "+44 20 0000 0000"}},
+	})
+	if want := []string{FieldEmailAddresses, FieldPhoneNumbers}; !reflect.DeepEqual(changed, want) {
+		t.Fatalf("changed = %v, want %v", changed, want)
+	}
+	got := merged.ToPerson()
+	assertNoProfileEntry(t, got)
+	if len(got.EmailAddresses) != 2 || got.EmailAddresses[1].Value != "extra@example.com" {
+		t.Errorf("emails = %#v, want ada@example.com and extra@example.com", got.EmailAddresses)
+	}
+	if len(got.PhoneNumbers) != 1 || got.PhoneNumbers[0].Value != "+44 20 0000 0000" {
+		t.Errorf("phones = %#v, want only the new number", got.PhoneNumbers)
+	}
+}
+
+func TestToPerson_ProfileOnlyNameIsNotCopied(t *testing.T) {
+	p := profileLinked()
+	p.Names = p.Names[:1]
+	c := FromPerson(p)
+	c.Company = "Changed"
+	if got := c.ToPerson().Names; len(got) != 0 {
+		t.Errorf("names = %#v, want none: the profile name is not the contact's", got)
+	}
+	c.GivenName = "Renamed"
+	got := c.ToPerson().Names
+	if len(got) != 1 || got[0].GivenName != "Renamed" || got[0].FamilyName != "Name" || !isOwned(got[0].Metadata) {
+		t.Errorf("names = %#v, want one new contact name Renamed Name", got)
+	}
+}
