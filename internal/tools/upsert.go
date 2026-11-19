@@ -65,6 +65,9 @@ func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (stri
 	// Resolve the group first so a bad name fails before any write.
 	group := ""
 	if in.Group != "" {
+		if err := checkGroup(in.Group); err != nil {
+			return "", UpsertOutput{}, err
+		}
 		var err error
 		if group, err = contacts.ResolveGroup(ctx, p, in.Group); err != nil {
 			return "", UpsertOutput{}, err

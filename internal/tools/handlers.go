@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -13,8 +14,10 @@ import (
 )
 
 const (
-	// contactPrefix starts every contact resource name.
-	contactPrefix = "people/"
+	// contactExample shows the contact resource name shape in errors.
+	contactExample = "people/c123"
+	// groupExample shows the group resource name shape in errors.
+	groupExample = "contactGroups/abc"
 
 	// defaultSearchLimit keeps search answers short; callers can ask for more.
 	defaultSearchLimit = 10
@@ -32,6 +35,14 @@ const (
 
 	// writeWarning ends every write tool description (spec §8).
 	writeWarning = " This changes the user's real address book."
+)
+
+// contactResourceRe and groupResourceRe are the only resource name shapes
+// passed to Google. Anything else (people/me, query strings, dot segments)
+// could address another resource or alter the request path.
+var (
+	contactResourceRe = regexp.MustCompile(`^people/c[0-9]+$`)
+	groupResourceRe   = regexp.MustCompile(`^contactGroups/[A-Za-z0-9_-]+$`)
 )
 
 // sortOrders lists the accepted list_contacts sort values, in message order.
@@ -412,6 +423,9 @@ func modifyMembers(ctx context.Context, p contacts.People, in ModifyMembersInput
 	if len(in.Add) == 0 && len(in.Remove) == 0 {
 		return "", ModifyMembersOutput{}, newToolError("add or remove must list at least one contact")
 	}
+	if err := checkGroup(in.Group); err != nil {
+		return "", ModifyMembersOutput{}, err
+	}
 	for _, rn := range slices.Concat(in.Add, in.Remove) {
 		if err := checkResourceName(rn); err != nil {
 			return "", ModifyMembersOutput{}, err
@@ -454,6 +468,9 @@ func resolveGroups(ctx context.Context, p contacts.People, groups []string) ([]s
 	cache := &groupCache{p: p}
 	out := make([]string, 0, len(groups))
 	for _, g := range groups {
+		if err := checkGroup(g); err != nil {
+			return nil, err
+		}
 		rn, err := contacts.ResolveGroup(ctx, cache, g)
 		if err != nil {
 			return nil, err
@@ -466,8 +483,17 @@ func resolveGroups(ctx context.Context, p contacts.People, groups []string) ([]s
 }
 
 func checkResourceName(rn string) error {
-	if !strings.HasPrefix(rn, contactPrefix) || len(rn) == len(contactPrefix) {
-		return newToolError(fmt.Sprintf("resource_name must start with %q", contactPrefix))
+	if !contactResourceRe.MatchString(rn) {
+		return newToolError(fmt.Sprintf("resource_name must look like %q", contactExample))
+	}
+	return nil
+}
+
+// checkGroup accepts a user-group display name, or a group resource name of
+// the expected shape.
+func checkGroup(g string) error {
+	if contacts.IsGroupResourceName(g) && !groupResourceRe.MatchString(g) {
+		return newToolError(fmt.Sprintf("group resource name must look like %q", groupExample))
 	}
 	return nil
 }

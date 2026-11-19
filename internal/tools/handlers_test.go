@@ -497,8 +497,8 @@ func TestGetContact_SummaryAndTouch(t *testing.T) {
 	if touched := h.toucher.ids(); len(touched) == 0 || touched[0] != testUserID {
 		t.Errorf("touched = %v", touched)
 	}
-	h.fail("get_contact", map[string]any{"resource_name": "people/missing"}, "contact not found")
-	h.fail("get_contact", map[string]any{"resource_name": "contactGroups/x"}, `resource_name must start with "people/"`)
+	h.fail("get_contact", map[string]any{"resource_name": "people/c999"}, "contact not found")
+	h.fail("get_contact", map[string]any{"resource_name": "contactGroups/x"}, `resource_name must look like "people/c123"`)
 }
 
 func TestSearchContacts(t *testing.T) {
@@ -695,7 +695,7 @@ func TestContactGroups(t *testing.T) {
 		t.Errorf("modify = %+v", mod)
 	}
 	h.fail("modify_contact_group_members", map[string]any{"group": "nope", "add": []string{c.ResourceName}}, `group "nope" not found`)
-	h.fail("modify_contact_group_members", map[string]any{"group": "investors", "add": []string{"people/missing"}}, "contact not found")
+	h.fail("modify_contact_group_members", map[string]any{"group": "investors", "add": []string{"people/c999"}}, "contact not found")
 	h.fail("modify_contact_group_members", map[string]any{"group": "investors"}, "add or remove must list at least one contact")
 	h.people.setErr("ModifyMembers", contacts.ErrNotFound)
 	h.fail("modify_contact_group_members", map[string]any{"group": "contactGroups/gone", "add": []string{c.ResourceName}}, "group not found")
@@ -767,6 +767,55 @@ func TestToolAnnotations(t *testing.T) {
 	for name, tool := range got {
 		if tool.OutputSchema == nil {
 			t.Errorf("%s: no output schema", name)
+		}
+	}
+}
+
+func TestCheckResourceName(t *testing.T) {
+	for _, rn := range []string{"people/c1", "people/c1234567890123"} {
+		if err := checkResourceName(rn); err != nil {
+			t.Errorf("checkResourceName(%q) = %v, want nil", rn, err)
+		}
+	}
+	for _, rn := range []string{
+		"", "people/", "people/c", "people/me", "people/c1?x=1", "people/../x", "people/c1/x",
+		"people/c1#x", "people/1", "people/cabc", "otherContacts/c1", "contactGroups/x", " people/c1", "people/c1\n",
+	} {
+		if err := checkResourceName(rn); err == nil {
+			t.Errorf("checkResourceName(%q) = nil, want an error", rn)
+		}
+	}
+}
+
+func TestCheckGroup(t *testing.T) {
+	for _, g := range []string{"contactGroups/myContacts", "contactGroups/3a4b_c-d", "investors", "Family & friends"} {
+		if err := checkGroup(g); err != nil {
+			t.Errorf("checkGroup(%q) = %v, want nil", g, err)
+		}
+	}
+	for _, g := range []string{"contactGroups/", "contactGroups/../x", "contactGroups/a?b=1", "contactGroups/a/members", "contactGroups/a b"} {
+		if err := checkGroup(g); err == nil {
+			t.Errorf("checkGroup(%q) = nil, want an error", g)
+		}
+	}
+}
+
+func TestResourceNames_RejectedBeforeGoogle(t *testing.T) {
+	h := newHarness(t)
+	for _, rn := range []string{"people/me", "people/c1?x=1", "people/../x"} {
+		h.fail("get_contact", map[string]any{"resource_name": rn}, `resource_name must look like "people/c123"`)
+		h.fail("delete_contact", map[string]any{"resource_name": rn}, `resource_name must look like "people/c123"`)
+		h.fail("update_contact", map[string]any{"resource_name": rn, "given_name": "X"}, `resource_name must look like "people/c123"`)
+		h.fail("modify_contact_group_members", map[string]any{"group": "contactGroups/abc", "add": []string{rn}},
+			`resource_name must look like "people/c123"`)
+	}
+	wantGroup := `group resource name must look like "contactGroups/abc"`
+	h.fail("modify_contact_group_members", map[string]any{"group": "contactGroups/../x", "add": []string{"people/c1"}}, wantGroup)
+	h.fail("create_contact", map[string]any{"given_name": "A", "groups": []string{"contactGroups/a?b=1"}}, wantGroup)
+	h.fail("upsert_contact_by_email", map[string]any{"email": "a@x.io", "group": "contactGroups/a/b"}, wantGroup)
+	for _, m := range []string{"Get", "Delete", "Update", "ModifyMembers", "Create", "Search", "ListGroups"} {
+		if n := h.people.callsOf(m); n != 0 {
+			t.Errorf("%s called %d times for an invalid resource name", m, n)
 		}
 	}
 }
