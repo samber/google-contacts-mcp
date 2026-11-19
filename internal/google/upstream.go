@@ -30,8 +30,8 @@ const (
 	// DefaultRevokeURL is Google's OAuth token revocation endpoint.
 	DefaultRevokeURL = "https://oauth2.googleapis.com/revoke"
 
-	// scopeContacts grants read and write access to the user's contacts.
-	scopeContacts = "https://www.googleapis.com/auth/contacts"
+	// ScopeContacts grants read and write access to the user's contacts.
+	ScopeContacts = "https://www.googleapis.com/auth/contacts"
 	// oauthErrInvalidGrant is the OAuth error Google returns for a revoked or
 	// expired refresh token (RFC 6749 §5.2).
 	oauthErrInvalidGrant = "invalid_grant"
@@ -46,11 +46,15 @@ const (
 	formContentType = "application/x-www-form-urlencoded"
 	// tokenTypeBearer is the only token type Google issues.
 	tokenTypeBearer = "Bearer"
+	// maxRefreshAttempts allows one retry when a new consent replaced the
+	// grant mid-refresh; a second change in the same instant is not worth
+	// waiting for.
+	maxRefreshAttempts = 2
 )
 
 // Scopes are the Google scopes requested at consent: identity to map the user
 // to a store row, plus full contacts access.
-var Scopes = []string{"openid", "email", scopeContacts}
+var Scopes = []string{"openid", "email", ScopeContacts}
 
 // UpstreamConfig configures the Google side. Zero Endpoint, PeopleBaseURL and
 // RevokeURL select the production Google endpoints; tests override them.
@@ -185,41 +189,62 @@ func (u *Upstream) loadToken(ctx context.Context, userID string) (*oauth2.Token,
 	return &oauth2.Token{AccessToken: t.AccessToken, RefreshToken: t.RefreshToken, Expiry: t.Expiry, TokenType: tokenTypeBearer}, nil
 }
 
-// refresh refreshes userID's access token and stores the result. It re-reads
-// the store first: a refresh that finished just before this flight started
-// already left a valid token there.
+// refresh refreshes userID's access token and stores the result. Each attempt
+// re-reads the store first: a refresh or a new consent that finished just
+// before already left a valid token there. The store is only changed while
+// it still holds the refresh token this attempt used, so a new consent that
+// lands mid-refresh is never overwritten or deleted; the next attempt then
+// picks up the newer grant.
 func (u *Upstream) refresh(ctx context.Context, userID string) (*oauth2.Token, error) {
-	stored, err := u.loadToken(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if stored.Valid() {
-		return stored, nil
-	}
 	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
+	for range maxRefreshAttempts {
+		tok, done, err := u.refreshOnce(ctx, userID)
+		if err != nil || done {
+			return tok, err
+		}
+	}
+	return nil, errors.New("google token refresh: grant changed during every attempt")
+}
+
+// refreshOnce runs one refresh attempt. done is false when the stored grant
+// changed during the attempt and the caller should try again.
+func (u *Upstream) refreshOnce(ctx context.Context, userID string) (tok *oauth2.Token, done bool, err error) {
+	stored, err := u.loadToken(ctx, userID)
+	if err != nil {
+		return nil, true, err
+	}
+	if stored.Valid() {
+		return stored, true, nil
+	}
 	fresh, err := u.oauth.TokenSource(u.oauthContext(ctx), &oauth2.Token{RefreshToken: stored.RefreshToken}).Token()
 	if err != nil {
 		var re *oauth2.RetrieveError
-		if errors.As(err, &re) && re.ErrorCode == oauthErrInvalidGrant {
-			// The user revoked access or the grant expired: forget them so the
-			// MCP client restarts the OAuth flow (spec §7).
-			if delErr := u.st.DeleteUser(ctx, userID); delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
-				return nil, errors.Join(contacts.ErrUpstreamAuth, delErr)
-			}
-			return nil, contacts.ErrUpstreamAuth
+		if !errors.As(err, &re) || re.ErrorCode != oauthErrInvalidGrant {
+			return nil, true, fmt.Errorf("google token refresh: %w", sanitizeTokenError(err))
 		}
-		return nil, fmt.Errorf("google token refresh: %w", sanitizeTokenError(err))
+		// The user revoked access or the grant expired: forget them so the
+		// MCP client restarts the OAuth flow (spec §7), unless a new consent
+		// replaced the failing grant meanwhile.
+		deleted, delErr := u.st.DeleteUserIfRefresh(ctx, userID, stored.RefreshToken)
+		if delErr != nil {
+			return nil, true, errors.Join(contacts.ErrUpstreamAuth, delErr)
+		}
+		if deleted {
+			return nil, true, contacts.ErrUpstreamAuth
+		}
+		return nil, false, nil
 	}
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = stored.RefreshToken
 	}
-	if err := u.st.SaveGoogleToken(ctx, userID, store.GoogleToken{
+	saved, err := u.st.SaveGoogleTokenIf(ctx, userID, stored.RefreshToken, store.GoogleToken{
 		RefreshToken: fresh.RefreshToken, AccessToken: fresh.AccessToken, Expiry: fresh.Expiry,
-	}); err != nil {
-		return nil, err
+	})
+	if err != nil {
+		return nil, true, err
 	}
-	return fresh, nil
+	return fresh, saved, nil
 }
 
 // sanitizeTokenError drops the token endpoint's response body, which

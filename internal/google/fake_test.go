@@ -57,6 +57,8 @@ type fakeGoogle struct {
 	newRefresh  string // refresh token returned, "" to omit it
 	revokeCode  int    // status returned by the revoke endpoint, 0 for 200
 	revokedForm []string
+	// onToken, when set, runs before the token endpoint answers.
+	onToken func()
 
 	// override, when set, may answer a request itself and return true.
 	override func(w http.ResponseWriter, r *http.Request, route string) bool
@@ -199,8 +201,11 @@ func (f *fakeGoogle) serveToken(w http.ResponseWriter) {
 		time.Sleep(f.tokenDelay)
 	}
 	f.mu.Lock()
-	tokErr, access, refresh := f.tokenError, f.newAccess, f.newRefresh
+	tokErr, access, refresh, hook := f.tokenError, f.newAccess, f.newRefresh, f.onToken
 	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if tokErr != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

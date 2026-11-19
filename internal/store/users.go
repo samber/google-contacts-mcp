@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -184,6 +185,98 @@ func (s *Store) SaveGoogleToken(ctx context.Context, userID string, t GoogleToke
 		return fmt.Errorf("store: save google token: %w", err)
 	}
 	return nil
+}
+
+// SaveGoogleTokenIf stores t only if the user's stored refresh token still
+// equals expectedRefresh, and reports whether it did. A refresh that started
+// before a new consent must not overwrite the newer grant. The read, compare
+// and write run in one immediate transaction. A user with no stored token
+// reports false.
+func (s *Store) SaveGoogleTokenIf(ctx context.Context, userID, expectedRefresh string, t GoogleToken) (saved bool, err error) {
+	aad := []byte(userID)
+	refreshCT, err := s.kr.Encrypt([]byte(t.RefreshToken), aad)
+	if err != nil {
+		return false, fmt.Errorf("store: encrypt refresh token: %w", err)
+	}
+	accessCT, err := s.kr.Encrypt([]byte(t.AccessToken), aad)
+	if err != nil {
+		return false, fmt.Errorf("store: encrypt access token: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: save google token if: begin: %w", err)
+	}
+	defer func() {
+		if err != nil || !saved {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	match, err := s.refreshMatches(ctx, tx, userID, expectedRefresh)
+	if err != nil || !match {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE google_tokens SET refresh_ct = ?, access_ct = ?, expiry = ?, key_id = ?
+		WHERE user_id = ?`,
+		refreshCT, accessCT, unixOrZero(t.Expiry), s.kr.ActiveID(), userID); err != nil {
+		return false, fmt.Errorf("store: save google token if: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: save google token if: commit: %w", err)
+	}
+	return true, nil
+}
+
+// DeleteUserIfRefresh deletes the user like DeleteUser, but only if their
+// stored refresh token still equals expectedRefresh, and reports whether it
+// did. An invalid_grant on an old refresh token must not delete a user who
+// re-consented in the meantime. A user with no stored token reports false.
+func (s *Store) DeleteUserIfRefresh(ctx context.Context, userID, expectedRefresh string) (deleted bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: delete user if: begin: %w", err)
+	}
+	defer func() {
+		if err != nil || !deleted {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	match, err := s.refreshMatches(ctx, tx, userID, expectedRefresh)
+	if err != nil || !match {
+		return false, err
+	}
+	for _, query := range deleteUserChildren {
+		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
+			return false, fmt.Errorf("store: delete user rows: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID); err != nil {
+		return false, fmt.Errorf("store: delete user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: delete user if: commit: %w", err)
+	}
+	s.forgetTouch(userID)
+	return true, nil
+}
+
+// refreshMatches reports whether userID's stored refresh token equals
+// expected, comparing the decrypted values in constant time.
+func (s *Store) refreshMatches(ctx context.Context, tx *sql.Tx, userID, expected string) (bool, error) {
+	var refreshCT []byte
+	err := tx.QueryRowContext(ctx,
+		`SELECT refresh_ct FROM google_tokens WHERE user_id = ?`, userID).Scan(&refreshCT)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: load google token: %w", err)
+	}
+	current, err := s.kr.Decrypt(refreshCT, []byte(userID))
+	if err != nil {
+		return false, fmt.Errorf("store: decrypt refresh token: %w", err)
+	}
+	return subtle.ConstantTimeCompare(current, []byte(expected)) == 1, nil
 }
 
 // GoogleToken returns the decrypted tokens of a user, or ErrNotFound.

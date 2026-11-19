@@ -476,3 +476,76 @@ func TestTouchUser_ThrottledPerMinute(t *testing.T) {
 		t.Errorf("touch after a minute: last_seen_at = %v", got)
 	}
 }
+
+func TestSaveGoogleTokenIf(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	u, err := s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if ok, err := s.SaveGoogleTokenIf(ctx, u.ID, "", GoogleToken{RefreshToken: "x"}); err != nil || ok {
+		t.Errorf("no row: saved %v, err %v; want false, nil", ok, err)
+	}
+	if err := s.SaveGoogleToken(ctx, u.ID, GoogleToken{RefreshToken: "r1", AccessToken: "a1"}); err != nil {
+		t.Fatalf("SaveGoogleToken: %v", err)
+	}
+
+	// A new consent replaced r1 with r2: the stale refresh must not win.
+	if err := s.SaveGoogleToken(ctx, u.ID, GoogleToken{RefreshToken: "r2", AccessToken: "a2"}); err != nil {
+		t.Fatalf("SaveGoogleToken: %v", err)
+	}
+	ok, err := s.SaveGoogleTokenIf(ctx, u.ID, "r1", GoogleToken{RefreshToken: "r1", AccessToken: "stale"})
+	if err != nil || ok {
+		t.Fatalf("mismatch: saved %v, err %v; want false, nil", ok, err)
+	}
+	if got, err := s.GoogleToken(ctx, u.ID); err != nil || got.RefreshToken != "r2" || got.AccessToken != "a2" {
+		t.Errorf("after mismatch: %+v, %v; want r2/a2 kept", got, err)
+	}
+
+	ok, err = s.SaveGoogleTokenIf(ctx, u.ID, "r2", GoogleToken{RefreshToken: "r2", AccessToken: "a3", Expiry: time.Unix(1_900_000_000, 0)})
+	if err != nil || !ok {
+		t.Fatalf("match: saved %v, err %v; want true, nil", ok, err)
+	}
+	if got, err := s.GoogleToken(ctx, u.ID); err != nil || got.AccessToken != "a3" || got.Expiry.Unix() != 1_900_000_000 {
+		t.Errorf("after match: %+v, %v", got, err)
+	}
+}
+
+func TestDeleteUserIfRefresh(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	u, err := s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if err := s.SaveGoogleToken(ctx, u.ID, GoogleToken{RefreshToken: "r2", AccessToken: "a2"}); err != nil {
+		t.Fatalf("SaveGoogleToken: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO oauth_tokens (signature, kind, request_id, user_id, client_id, data, expires_at, active)
+		 VALUES ('sig', 'access', 'req', ?, 'client', x'00', 0, 1)`, u.ID); err != nil {
+		t.Fatalf("insert oauth_tokens: %v", err)
+	}
+
+	if ok, err := s.DeleteUserIfRefresh(ctx, u.ID, "r1"); err != nil || ok {
+		t.Fatalf("mismatch: deleted %v, err %v; want false, nil", ok, err)
+	}
+	if _, err := s.UserBySubOrEmail(ctx, "sub-1"); err != nil {
+		t.Fatalf("user gone after mismatch: %v", err)
+	}
+
+	if ok, err := s.DeleteUserIfRefresh(ctx, u.ID, "r2"); err != nil || !ok {
+		t.Fatalf("match: deleted %v, err %v; want true, nil", ok, err)
+	}
+	if _, err := s.UserBySubOrEmail(ctx, "sub-1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("user still found: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM oauth_tokens WHERE user_id = ?`, u.ID).Scan(&n); err != nil || n != 0 {
+		t.Errorf("oauth_tokens left = %d, err %v", n, err)
+	}
+	if ok, err := s.DeleteUserIfRefresh(ctx, u.ID, "r2"); err != nil || ok {
+		t.Errorf("unknown user: deleted %v, err %v; want false, nil", ok, err)
+	}
+}

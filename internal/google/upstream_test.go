@@ -202,3 +202,51 @@ func TestRevoke(t *testing.T) {
 		t.Errorf("err = %v, want an error without the token", err)
 	}
 }
+
+// reconsent stores a fresh grant, as the OAuth callback does when the user
+// connects again while an old refresh is in flight.
+func (e *testEnv) reconsent(t *testing.T) {
+	t.Helper()
+	if err := e.st.SaveGoogleToken(context.Background(), e.userID, store.GoogleToken{
+		RefreshToken: "refresh-reconsent", AccessToken: "access-reconsent", Expiry: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Errorf("SaveGoogleToken: %v", err)
+	}
+}
+
+func TestTokenSource_RefreshDoesNotOverwriteNewerGrant(t *testing.T) {
+	env := newTestEnv(t)
+	env.expireToken(t)
+	env.fake.onToken = func() { env.reconsent(t) }
+	ctx := context.Background()
+	if _, err := env.people(t).Get(ctx, "people/c1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got, err := env.st.GoogleToken(ctx, env.userID)
+	if err != nil {
+		t.Fatalf("GoogleToken: %v", err)
+	}
+	if got.RefreshToken != "refresh-reconsent" || got.AccessToken != "access-reconsent" {
+		t.Errorf("stored = refresh %q access %q; want the re-consent grant kept", got.RefreshToken, got.AccessToken)
+	}
+	if _, _, auth, _ := env.fake.last(routeGet); auth != "Bearer access-reconsent" {
+		t.Errorf("Authorization = %q, want the newer grant's token", auth)
+	}
+}
+
+func TestTokenSource_InvalidGrantKeepsUserWhoReconsented(t *testing.T) {
+	env := newTestEnv(t)
+	env.expireToken(t)
+	env.fake.tokenError = "invalid_grant"
+	env.fake.onToken = func() { env.reconsent(t) }
+	ctx := context.Background()
+	if _, err := env.people(t).Get(ctx, "people/c1"); err != nil {
+		t.Fatalf("Get: %v, want the newer grant used", err)
+	}
+	if _, err := env.st.UserBySubOrEmail(ctx, "sub-1"); err != nil {
+		t.Fatalf("user deleted despite re-consent: %v", err)
+	}
+	if _, _, auth, _ := env.fake.last(routeGet); auth != "Bearer access-reconsent" {
+		t.Errorf("Authorization = %q, want the newer grant's token", auth)
+	}
+}
