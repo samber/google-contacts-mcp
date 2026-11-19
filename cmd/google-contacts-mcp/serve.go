@@ -73,6 +73,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 		// Always wired, metrics or not: the hook also records the Google
 		// status that tool-call log lines report.
 		OnPeopleCall: metrics.GoogleHook(),
+		Logger:       log,
 	}, st, nil)
 	osrv, err := oauth.New(cfg, oauth.Deps{
 		Store:    st,

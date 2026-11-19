@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,6 +55,9 @@ const (
 	// joined a flight started without the rejected token, which can hand
 	// that same token back.
 	maxForcedFlights = 2
+	// reasonGoogleRevoked is the "user disconnected" log reason when Google
+	// reports the grant revoked or expired.
+	reasonGoogleRevoked = "google_revoked"
 )
 
 // Scopes are the Google scopes requested at consent: identity to map the user
@@ -68,6 +72,8 @@ type UpstreamConfig struct {
 	PeopleBaseURL, RevokeURL            string
 	// OnPeopleCall observes every People API call; nil disables it.
 	OnPeopleCall CallHook
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // Upstream owns the Google OAuth client and every user's Google token source.
@@ -78,6 +84,7 @@ type Upstream struct {
 	st        *store.Store
 	http      *http.Client
 	onCall    CallHook
+	log       *slog.Logger
 
 	// refreshes allows one in-flight refresh per user id.
 	refreshes singleflight.Group
@@ -100,6 +107,9 @@ func NewUpstream(cfg UpstreamConfig, st *store.Store, httpClient *http.Client) *
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	return &Upstream{
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
@@ -113,6 +123,7 @@ func NewUpstream(cfg UpstreamConfig, st *store.Store, httpClient *http.Client) *
 		st:        st,
 		http:      httpClient,
 		onCall:    cfg.OnPeopleCall,
+		log:       cfg.Logger,
 	}
 }
 
@@ -244,6 +255,8 @@ func (u *Upstream) refreshOnce(ctx context.Context, userID, rejected string) (to
 			return nil, true, errors.Join(contacts.ErrUpstreamAuth, delErr)
 		}
 		if deleted {
+			u.log.InfoContext(ctx, "user disconnected",
+				slog.String("user_id", userID), slog.String("reason", reasonGoogleRevoked))
 			return nil, true, contacts.ErrUpstreamAuth
 		}
 		return nil, false, nil

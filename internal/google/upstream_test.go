@@ -1,10 +1,13 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -146,10 +149,27 @@ func TestTokenSource_InvalidGrantDeletesUser(t *testing.T) {
 	env := newTestEnv(t)
 	env.expireToken(t)
 	env.fake.tokenError = "invalid_grant"
+	var logs bytes.Buffer
+	env.up.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	ctx := context.Background()
 	_, err := env.people(t).Get(ctx, "people/c1")
 	if !errors.Is(err, contacts.ErrUpstreamAuth) {
 		t.Fatalf("err = %v, want ErrUpstreamAuth", err)
+	}
+	var line struct {
+		Level  string `json:"level"`
+		Msg    string `json:"msg"`
+		UserID string `json:"user_id"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &line); err != nil {
+		t.Fatalf("log = %q: %v", logs.String(), err)
+	}
+	if line.Level != "INFO" || line.Msg != "user disconnected" || line.UserID != env.userID || line.Reason != reasonGoogleRevoked {
+		t.Errorf("log = %s, want an info \"user disconnected\" line with user_id and reason %s", logs.String(), reasonGoogleRevoked)
+	}
+	if strings.Contains(logs.String(), "@") {
+		t.Errorf("log names an e-mail: %s", logs.String())
 	}
 	if strings.Contains(err.Error(), "secret detail") {
 		t.Errorf("error leaks the token response body: %v", err)

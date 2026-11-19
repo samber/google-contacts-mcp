@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -217,9 +218,19 @@ func TestDisconnectUser(t *testing.T) {
 				}
 			}
 			rv := &fakeRevoker{err: tc.revokeErr}
-			var out bytes.Buffer
+			var out, logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
 			if err := disconnectUser(ctx, st, rv, "sub-1", &out); err != nil {
 				t.Fatalf("disconnectUser: %v", err)
+			}
+			wantLog := `"level":"INFO","msg":"user disconnected","user_id":"` + u.ID + `","reason":"cli"`
+			if !strings.Contains(logs.String(), wantLog) {
+				t.Errorf("logs = %s, want %s", logs.String(), wantLog)
+			}
+			if strings.Contains(logs.String(), "a@example.com") {
+				t.Errorf("logs name the e-mail: %s", logs.String())
 			}
 			if !reflect.DeepEqual(rv.revoked, tc.wantRevoked) {
 				t.Errorf("revoked = %q, want %q", rv.revoked, tc.wantRevoked)

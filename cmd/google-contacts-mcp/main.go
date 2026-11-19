@@ -28,6 +28,8 @@ const (
 
 	// exitFailure is the conventional non-zero exit code for any error.
 	exitFailure = 1
+	// reasonCLI is the "user disconnected" log reason for the disconnect command.
+	reasonCLI = "cli"
 )
 
 func main() {
@@ -162,6 +164,7 @@ func disconnectUser(ctx context.Context, st *store.Store, rv revoker, who string
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		return fmt.Errorf("disconnect %q: %w", who, err)
 	}
+	slog.InfoContext(ctx, "user disconnected", slog.String("user_id", u.ID), slog.String("reason", reasonCLI))
 	_, err = fmt.Fprintf(stdout, "disconnected %s\n", u.ID)
 	return err
 }
