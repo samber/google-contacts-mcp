@@ -190,6 +190,12 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	}
 }
 
+// ResourceMetadataURL is the RFC 9728 metadata URL that 401 answers on /mcp
+// point clients to (spec §5.2).
+func (s *Server) ResourceMetadataURL() string {
+	return s.issuer + pathResourceMetadata
+}
+
 // Verifier returns the go-sdk bearer token verifier: the token must be one of
 // our live access tokens, for audience <base-url>/mcp with scope contacts.
 func (s *Server) Verifier() auth.TokenVerifier {

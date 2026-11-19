@@ -1,0 +1,773 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/samber/google-contacts-mcp/internal/contacts"
+	"github.com/samber/google-contacts-mcp/internal/limits"
+)
+
+const (
+	testUserID = "user-1"
+	testToken  = "good-token"
+	// testMetadataURL is what the 401 header must point to.
+	testMetadataURL = "https://mcp.example.com/.well-known/oauth-protected-resource"
+)
+
+// fakePeople is an in-memory contacts.People. Update honours the field mask
+// and the etag like Google does.
+type fakePeople struct {
+	mu       sync.Mutex
+	contacts map[string]contacts.Contact
+	groups   []contacts.Group
+	seq      int
+	calls    []string
+	// searchStrip drops everything but emails and the resource name from
+	// search results, as a partial readMask would.
+	searchStrip bool
+	// errs forces an error for a method name.
+	errs map[string]error
+
+	lastUpdateFields []string
+	lastList         listArgs
+	modifies         []modifyCall
+}
+
+type modifyCall struct {
+	group       string
+	add, remove []string
+}
+
+func newFakePeople() *fakePeople {
+	return &fakePeople{contacts: map[string]contacts.Contact{}, errs: map[string]error{}}
+}
+
+func (f *fakePeople) record(method string) error {
+	f.calls = append(f.calls, method)
+	return f.errs[method]
+}
+
+func (f *fakePeople) put(c contacts.Contact) contacts.Contact {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c.ResourceName == "" {
+		f.seq++
+		c.ResourceName = "people/c" + strconv.Itoa(f.seq)
+	}
+	c.Etag = "etag-" + strconv.Itoa(len(f.calls)) + "-" + c.ResourceName
+	f.contacts[c.ResourceName] = c
+	return c
+}
+
+func (f *fakePeople) lookup(rn string) (contacts.Contact, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.contacts[rn]
+	return c, ok
+}
+
+func (f *fakePeople) stored(rn string) contacts.Contact {
+	c, _ := f.lookup(rn)
+	return c
+}
+
+func (f *fakePeople) setErr(method string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errs[method] = err
+}
+
+func (f *fakePeople) setGroups(groups []contacts.Group) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groups = groups
+}
+
+func (f *fakePeople) updateFields() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.lastUpdateFields)
+}
+
+type listArgs struct {
+	pageSize         int
+	pageToken, order string
+}
+
+func (f *fakePeople) listArgs() listArgs {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastList
+}
+
+func (f *fakePeople) modifyCalls() []modifyCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.modifies)
+}
+
+func (f *fakePeople) callsOf(method string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == method {
+			n++
+		}
+	}
+	return n
+}
+
+func (f *fakePeople) writes() int {
+	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") + f.callsOf("CreateGroup")
+}
+
+func (f *fakePeople) sorted() []contacts.Contact {
+	out := make([]contacts.Contact, 0, len(f.contacts))
+	for _, c := range f.contacts {
+		out = append(out, c)
+	}
+	slices.SortFunc(out, func(a, b contacts.Contact) int { return strings.Compare(a.ResourceName, b.ResourceName) })
+	return out
+}
+
+func (f *fakePeople) Search(_ context.Context, query string, limit int) ([]contacts.Contact, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Search"); err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(query)
+	var out []contacts.Contact
+	for _, c := range f.sorted() {
+		match := strings.HasPrefix(strings.ToLower(c.GivenName), q)
+		for _, e := range c.Emails {
+			match = match || strings.HasPrefix(strings.ToLower(e.Value), q)
+		}
+		if !match {
+			continue
+		}
+		if f.searchStrip {
+			c = contacts.Contact{ResourceName: c.ResourceName, Emails: c.Emails, DisplayName: c.DisplayName}
+		}
+		out = append(out, c)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *fakePeople) List(_ context.Context, pageSize int, pageToken, sortOrder string) ([]contacts.Contact, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastList = listArgs{pageSize: pageSize, pageToken: pageToken, order: sortOrder}
+	if err := f.record("List"); err != nil {
+		return nil, "", err
+	}
+	return f.sorted(), "next", nil
+}
+
+func (f *fakePeople) Get(_ context.Context, resourceName string) (contacts.Contact, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Get"); err != nil {
+		return contacts.Contact{}, err
+	}
+	c, ok := f.contacts[resourceName]
+	if !ok {
+		return contacts.Contact{}, contacts.ErrNotFound
+	}
+	return c, nil
+}
+
+func (f *fakePeople) Create(_ context.Context, c contacts.Contact) (contacts.Contact, error) {
+	f.mu.Lock()
+	if err := f.record("Create"); err != nil {
+		f.mu.Unlock()
+		return contacts.Contact{}, err
+	}
+	f.mu.Unlock()
+	c.ResourceName = ""
+	return f.put(c), nil
+}
+
+func (f *fakePeople) Update(_ context.Context, c contacts.Contact, fields []string) (contacts.Contact, error) {
+	f.mu.Lock()
+	if err := f.record("Update"); err != nil {
+		f.mu.Unlock()
+		return contacts.Contact{}, err
+	}
+	f.lastUpdateFields = slices.Clone(fields)
+	cur, ok := f.contacts[c.ResourceName]
+	f.mu.Unlock()
+	if !ok {
+		return contacts.Contact{}, contacts.ErrNotFound
+	}
+	if c.Etag == "" || c.Etag != cur.Etag {
+		return contacts.Contact{}, contacts.ErrConflict
+	}
+	for _, field := range fields {
+		switch field {
+		case contacts.FieldNames:
+			cur.GivenName, cur.FamilyName = c.GivenName, c.FamilyName
+		case contacts.FieldOrganizations:
+			cur.Company, cur.JobTitle = c.Company, c.JobTitle
+		case contacts.FieldBiographies:
+			cur.Notes = c.Notes
+		case contacts.FieldEmailAddresses:
+			cur.Emails = c.Emails
+		case contacts.FieldPhoneNumbers:
+			cur.Phones = c.Phones
+		case contacts.FieldURLs:
+			cur.Websites = c.Websites
+		case contacts.FieldAddresses:
+			cur.Addresses = c.Addresses
+		case contacts.FieldMemberships:
+			cur.Groups = c.Groups
+		default:
+			return contacts.Contact{}, fmt.Errorf("fake: unknown field %q", field)
+		}
+	}
+	return f.put(cur), nil
+}
+
+func (f *fakePeople) Delete(_ context.Context, resourceName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("Delete"); err != nil {
+		return err
+	}
+	if _, ok := f.contacts[resourceName]; !ok {
+		return contacts.ErrNotFound
+	}
+	delete(f.contacts, resourceName)
+	return nil
+}
+
+func (f *fakePeople) ListGroups(_ context.Context) ([]contacts.Group, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("ListGroups"); err != nil {
+		return nil, err
+	}
+	return slices.Clone(f.groups), nil
+}
+
+func (f *fakePeople) CreateGroup(_ context.Context, name string) (contacts.Group, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.record("CreateGroup"); err != nil {
+		return contacts.Group{}, err
+	}
+	g := contacts.Group{ResourceName: "contactGroups/g" + strconv.Itoa(len(f.groups)+1), Name: name, Type: contacts.GroupTypeUser}
+	f.groups = append(f.groups, g)
+	return g, nil
+}
+
+func (f *fakePeople) ModifyMembers(ctx context.Context, group string, add, remove []string) error {
+	f.mu.Lock()
+	if err := f.record("ModifyMembers"); err != nil {
+		f.mu.Unlock()
+		return err
+	}
+	f.mu.Unlock()
+	rn, err := contacts.ResolveGroup(ctx, f, group)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.modifies = append(f.modifies, modifyCall{group: rn, add: add, remove: remove})
+	for _, r := range add {
+		c, ok := f.contacts[r]
+		if !ok {
+			return fmt.Errorf("%w: %s", contacts.ErrNotFound, r)
+		}
+		c.Groups = append(c.Groups, rn)
+		f.contacts[r] = c
+	}
+	return nil
+}
+
+// fakeFactory hands out the same fakePeople for the expected user.
+type fakeFactory struct {
+	people *fakePeople
+	mu     sync.Mutex
+	err    error
+}
+
+func (f *fakeFactory) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeFactory) People(_ context.Context, userID string) (contacts.People, error) {
+	f.mu.Lock()
+	err := f.err
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if userID != testUserID {
+		return nil, fmt.Errorf("unexpected user %q", userID)
+	}
+	return f.people, nil
+}
+
+type fakeToucher struct {
+	mu      sync.Mutex
+	touched []string
+}
+
+func (f *fakeToucher) ids() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.touched)
+}
+
+func (f *fakeToucher) TouchUser(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, id)
+	return nil
+}
+
+// fakeVerifier accepts testToken only, with the uid Extra key oauth.UserID reads.
+func fakeVerifier(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+	if token != testToken {
+		return nil, fmt.Errorf("%w: unknown token", auth.ErrInvalidToken)
+	}
+	return &auth.TokenInfo{
+		Scopes:     []string{"contacts"},
+		Expiration: time.Now().Add(time.Hour),
+		UserID:     testUserID,
+		Extra:      map[string]any{"uid": testUserID},
+	}, nil
+}
+
+type harness struct {
+	t       *testing.T
+	people  *fakePeople
+	factory *fakeFactory
+	toucher *fakeToucher
+	srv     *httptest.Server
+	session *mcp.ClientSession
+}
+
+type harnessOption func(*Deps)
+
+func newHarness(t *testing.T, opts ...harnessOption) *harness {
+	t.Helper()
+	return newHarnessWrapped(t, nil, opts...)
+}
+
+// newHarnessWrapped is newHarness with wrap applied around the handler.
+func newHarnessWrapped(t *testing.T, wrap func(http.Handler) http.Handler, opts ...harnessOption) *harness {
+	t.Helper()
+	h := &harness{t: t, people: newFakePeople(), toucher: &fakeToucher{}}
+	h.factory = &fakeFactory{people: h.people}
+	deps := Deps{
+		People:              h.factory,
+		Store:               h.toucher,
+		Limiter:             limits.New(1000, 1000),
+		Verifier:            fakeVerifier,
+		ResourceMetadataURL: testMetadataURL,
+		Version:             "test",
+	}
+	for _, o := range opts {
+		o(&deps)
+	}
+	handler := NewHandler(deps)
+	if wrap != nil {
+		handler = wrap(handler)
+	}
+	h.srv = httptest.NewServer(handler)
+	t.Cleanup(h.srv.Close)
+	h.session = h.connect("")
+	return h
+}
+
+// bearerTransport adds the test bearer token to every request.
+type bearerTransport struct{ token string }
+
+func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func (h *harness) connect(version string) *mcp.ClientSession {
+	h.t.Helper()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             h.srv.URL,
+		HTTPClient:           &http.Client{Transport: bearerTransport{token: testToken}},
+		MaxRetries:           -1,
+		DisableStandaloneSSE: true,
+	}
+	cs, err := client.Connect(context.Background(), transport, &mcp.ClientSessionOptions{ProtocolVersion: version})
+	if err != nil {
+		h.t.Fatalf("Connect(%q): %v", version, err)
+	}
+	h.t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			h.t.Logf("close session: %v", err)
+		}
+	})
+	return cs
+}
+
+// call runs a tool and returns its result; protocol errors fail the test.
+func (h *harness) call(name string, args any) *mcp.CallToolResult {
+	h.t.Helper()
+	res, err := h.session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		h.t.Fatalf("CallTool(%s): %v", name, err)
+	}
+	return res
+}
+
+// ok runs a tool, requires success and decodes its structured output.
+func (h *harness) ok(name string, args, out any) *mcp.CallToolResult {
+	h.t.Helper()
+	res := h.call(name, args)
+	if res.IsError {
+		h.t.Fatalf("%s: tool error %q", name, resultText(res))
+	}
+	if out != nil {
+		raw, err := json.Marshal(res.StructuredContent)
+		if err != nil {
+			h.t.Fatalf("marshal structured content: %v", err)
+		}
+		if err := json.Unmarshal(raw, out); err != nil {
+			h.t.Fatalf("decode %s output %s: %v", name, raw, err)
+		}
+	}
+	return res
+}
+
+// fail runs a tool and requires a tool error with exactly want.
+func (h *harness) fail(name string, args any, want string) {
+	h.t.Helper()
+	res := h.call(name, args)
+	if !res.IsError {
+		h.t.Fatalf("%s: IsError = false, want %q", name, want)
+	}
+	if got := resultText(res); got != want {
+		h.t.Fatalf("%s: error = %q, want %q", name, got, want)
+	}
+}
+
+func resultText(res *mcp.CallToolResult) string {
+	var parts []string
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			parts = append(parts, tc.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func TestGetContact_SummaryAndTouch(t *testing.T) {
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{GivenName: "Ada", Emails: []contacts.Typed{{Value: "ada@x.io", Type: "work"}}})
+	var out ContactOutput
+	res := h.ok("get_contact", map[string]any{"resource_name": c.ResourceName}, &out)
+	if out.ResourceName != c.ResourceName || out.GivenName != "Ada" || out.Etag != c.Etag || len(out.Emails) != 1 || out.Emails[0].Type != "work" {
+		t.Errorf("output = %+v", out)
+	}
+	if got := resultText(res); got != "contact "+c.ResourceName {
+		t.Errorf("summary = %q", got)
+	}
+	if touched := h.toucher.ids(); len(touched) == 0 || touched[0] != testUserID {
+		t.Errorf("touched = %v", touched)
+	}
+	h.fail("get_contact", map[string]any{"resource_name": "people/missing"}, "contact not found")
+	h.fail("get_contact", map[string]any{"resource_name": "contactGroups/x"}, `resource_name must start with "people/"`)
+}
+
+func TestSearchContacts(t *testing.T) {
+	h := newHarness(t)
+	h.people.put(contacts.Contact{GivenName: "Ada"})
+	h.people.put(contacts.Contact{GivenName: "Adam"})
+	h.people.put(contacts.Contact{GivenName: "Bob"})
+	var out SearchOutput
+	res := h.ok("search_contacts", map[string]any{"query": "ad"}, &out)
+	if len(out.Contacts) != 2 {
+		t.Errorf("contacts = %+v", out.Contacts)
+	}
+	if got := resultText(res); got != "2 contacts found" {
+		t.Errorf("summary = %q", got)
+	}
+}
+
+func TestCreateContact_GroupsByName(t *testing.T) {
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{
+		{ResourceName: "contactGroups/inv", Name: "Investors", Type: contacts.GroupTypeUser},
+		{ResourceName: "contactGroups/friends", Name: "Friends", Type: contacts.GroupTypeSystem},
+	})
+	var out ContactOutput
+	res := h.ok("create_contact", map[string]any{
+		"given_name": "Ada",
+		"emails":     []map[string]string{{"value": "ada@x.io", "type": "work"}},
+		"websites":   []map[string]string{{"value": "https://linkedin.com/in/ada", "type": "linkedin"}},
+		"groups":     []string{"investors", "contactGroups/raw"},
+	}, &out)
+	if out.ResourceName == "" || resultText(res) != "created contact "+out.ResourceName {
+		t.Errorf("out = %+v, summary %q", out, resultText(res))
+	}
+	stored := h.people.stored(out.ResourceName)
+	if !slices.Equal(stored.Groups, []string{"contactGroups/inv", "contactGroups/raw"}) {
+		t.Errorf("groups = %v", stored.Groups)
+	}
+	if len(stored.Websites) != 1 || stored.Websites[0].Type != contacts.WebsiteTypeLinkedIn {
+		t.Errorf("websites = %+v", stored.Websites)
+	}
+	writes := h.people.writes()
+	h.fail("create_contact", map[string]any{"given_name": "X", "groups": []string{"friends"}}, `group "friends" not found`)
+	if h.people.writes() != writes {
+		t.Error("create ran despite an unknown group")
+	}
+}
+
+func TestUpdateContact_OnlyProvidedFields(t *testing.T) {
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{
+		GivenName: "Ada", FamilyName: "Lovelace", Company: "Analytical", Notes: "keep me",
+		Emails: []contacts.Typed{{Value: "ada@x.io"}},
+		Phones: []contacts.Typed{{Value: "+33 1"}},
+	})
+	var out ContactOutput
+	res := h.ok("update_contact", map[string]any{
+		"resource_name": c.ResourceName,
+		"job_title":     "Countess",
+		"notes":         "",
+		"phones":        []map[string]string{{"value": "+44 2", "type": "mobile"}},
+	}, &out)
+	want := []string{contacts.FieldBiographies, contacts.FieldOrganizations, contacts.FieldPhoneNumbers}
+	if !slices.Equal(h.people.updateFields(), want) {
+		t.Errorf("fields = %v, want %v", h.people.updateFields(), want)
+	}
+	stored := h.people.stored(c.ResourceName)
+	if stored.GivenName != "Ada" || stored.FamilyName != "Lovelace" || stored.Company != "Analytical" || stored.JobTitle != "Countess" {
+		t.Errorf("stored = %+v", stored)
+	}
+	if stored.Notes != "" {
+		t.Errorf("notes = %q, want cleared", stored.Notes)
+	}
+	if len(stored.Phones) != 1 || stored.Phones[0].Value != "+44 2" || len(stored.Emails) != 1 {
+		t.Errorf("phones = %+v emails = %+v", stored.Phones, stored.Emails)
+	}
+	if got := resultText(res); got != "updated contact "+c.ResourceName {
+		t.Errorf("summary = %q", got)
+	}
+	if h.people.callsOf("Get") != 1 {
+		t.Errorf("Get calls = %d, want 1 (fresh etag)", h.people.callsOf("Get"))
+	}
+
+	h.fail("update_contact", map[string]any{"resource_name": c.ResourceName}, "no field to update")
+}
+
+func TestUpdateContact_Conflict(t *testing.T) {
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{GivenName: "Ada"})
+	h.people.setErr("Update", contacts.ErrConflict)
+	h.fail("update_contact", map[string]any{"resource_name": c.ResourceName, "given_name": "Bea"}, "contact changed, re-read it")
+	if n := h.people.callsOf("Update"); n != 1 {
+		t.Errorf("Update calls = %d, want 1 (no silent retry)", n)
+	}
+}
+
+func TestDeleteContact(t *testing.T) {
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{GivenName: "Ada"})
+	var out DeleteOutput
+	res := h.ok("delete_contact", map[string]any{"resource_name": c.ResourceName}, &out)
+	if !out.Deleted || out.ResourceName != c.ResourceName || resultText(res) != "deleted contact "+c.ResourceName {
+		t.Errorf("out = %+v summary %q", out, resultText(res))
+	}
+	if _, ok := h.people.lookup(c.ResourceName); ok {
+		t.Error("contact still stored")
+	}
+	h.fail("delete_contact", map[string]any{"resource_name": c.ResourceName}, "contact not found")
+}
+
+func TestListContacts_PageSizeClamp(t *testing.T) {
+	cases := []struct {
+		in   any
+		want int
+	}{{nil, 100}, {0, 100}, {-5, 100}, {1, 1}, {1000, 1000}, {5000, 1000}}
+	for _, tc := range cases {
+		t.Run(fmt.Sprint(tc.in), func(t *testing.T) {
+			h := newHarness(t)
+			args := map[string]any{}
+			if tc.in != nil {
+				args["page_size"] = tc.in
+			}
+			var out ListOutput
+			h.ok("list_contacts", args, &out)
+			if h.people.listArgs().pageSize != tc.want {
+				t.Errorf("page size = %d, want %d", h.people.listArgs().pageSize, tc.want)
+			}
+			if out.NextPageToken != "next" {
+				t.Errorf("next = %q", out.NextPageToken)
+			}
+		})
+	}
+}
+
+func TestListContacts_Sort(t *testing.T) {
+	h := newHarness(t)
+	h.ok("list_contacts", map[string]any{"sort": "LAST_MODIFIED_DESCENDING", "page_token": "tok"}, nil)
+	if h.people.listArgs().order != "LAST_MODIFIED_DESCENDING" || h.people.listArgs().pageToken != "tok" {
+		t.Errorf("list = %+v", h.people.listArgs())
+	}
+	h.fail("list_contacts", map[string]any{"sort": "RANDOM"}, "sort must be one of FIRST_NAME_ASCENDING, LAST_NAME_ASCENDING, LAST_MODIFIED_DESCENDING")
+}
+
+func TestListContacts_BadPageToken(t *testing.T) {
+	h := newHarness(t)
+	h.people.setErr("List", fmt.Errorf("people list: google returned HTTP 400: %w", contacts.ErrInvalidArgument))
+	h.fail("list_contacts", map[string]any{"page_token": "bogus"}, "invalid page_token")
+}
+
+func TestRateLimitedToolError(t *testing.T) {
+	h := newHarness(t, func(d *Deps) { d.Limiter = limits.New(1000, 1) })
+	c := h.people.put(contacts.Contact{GivenName: "Ada"})
+	h.ok("update_contact", map[string]any{"resource_name": c.ResourceName, "given_name": "Bea"}, nil)
+	res := h.call("update_contact", map[string]any{"resource_name": c.ResourceName, "given_name": "Cy"})
+	if !res.IsError || !strings.HasPrefix(resultText(res), "rate limited, retry after ") || !strings.HasSuffix(resultText(res), "s") {
+		t.Fatalf("result = %v %q", res.IsError, resultText(res))
+	}
+	if n := h.people.callsOf("Update"); n != 1 {
+		t.Errorf("Update calls = %d, want 1", n)
+	}
+	// Reads use their own bucket.
+	h.ok("get_contact", map[string]any{"resource_name": c.ResourceName}, nil)
+
+	h.people.setErr("Get", contacts.RateLimitedError{RetryAfter: 1500 * time.Millisecond})
+	h.fail("get_contact", map[string]any{"resource_name": c.ResourceName}, "rate limited, retry after 2s")
+}
+
+func TestUpstreamAuthMessage(t *testing.T) {
+	h := newHarness(t)
+	h.factory.setErr(contacts.ErrUpstreamAuth)
+	h.fail("search_contacts", map[string]any{"query": "a"}, "Google access was revoked; reconnect this connector")
+	h.factory.setErr(nil)
+	h.people.setErr("Get", fmt.Errorf("people get: %w", contacts.ErrUpstreamAuth))
+	h.fail("get_contact", map[string]any{"resource_name": "people/c1"}, "Google access was revoked; reconnect this connector")
+}
+
+func TestContactGroups(t *testing.T) {
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{{ResourceName: "contactGroups/myContacts", Name: "My Contacts", Type: contacts.GroupTypeSystem, MemberCount: 4}})
+	var created GroupOutput
+	h.ok("create_contact_group", map[string]any{"name": "Investors"}, &created)
+	if created.ResourceName == "" || created.Name != "Investors" || created.Type != contacts.GroupTypeUser {
+		t.Errorf("created = %+v", created)
+	}
+	var list GroupsOutput
+	res := h.ok("list_contact_groups", map[string]any{}, &list)
+	if len(list.Groups) != 2 || list.Groups[0].MemberCount != 4 || resultText(res) != "2 contact groups" {
+		t.Errorf("groups = %+v summary %q", list.Groups, resultText(res))
+	}
+
+	c := h.people.put(contacts.Contact{GivenName: "Ada"})
+	var mod ModifyMembersOutput
+	h.ok("modify_contact_group_members", map[string]any{"group": "investors", "add": []string{c.ResourceName}}, &mod)
+	if mod.Added != 1 || mod.Removed != 0 {
+		t.Errorf("modify = %+v", mod)
+	}
+	h.fail("modify_contact_group_members", map[string]any{"group": "nope", "add": []string{c.ResourceName}}, `group "nope" not found`)
+	h.fail("modify_contact_group_members", map[string]any{"group": "investors", "add": []string{"people/missing"}}, "contact not found")
+	h.fail("modify_contact_group_members", map[string]any{"group": "investors"}, "add or remove must list at least one contact")
+	h.people.setErr("ModifyMembers", contacts.ErrNotFound)
+	h.fail("modify_contact_group_members", map[string]any{"group": "contactGroups/gone", "add": []string{c.ResourceName}}, "group not found")
+}
+
+func TestToolErrorsHideUnknownCauses(t *testing.T) {
+	h := newHarness(t)
+	h.people.setErr("Search", errors.New("people search: google returned HTTP 503"))
+	h.fail("search_contacts", map[string]any{"query": "secret-query"}, "people search: google returned HTTP 503")
+}
+
+func TestToolAnnotations(t *testing.T) {
+	srv := NewServer(Deps{People: &fakeFactory{people: newFakePeople()}, Store: &fakeToucher{}, Limiter: limits.New(10, 10), Version: "test"})
+	st, ct := mcp.NewInMemoryTransports()
+	ctx := context.Background()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Logf("close: %v", err)
+		}
+	})
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Logf("close: %v", err)
+		}
+	})
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	reads := []string{"search_contacts", "list_contacts", "get_contact", "list_contact_groups"}
+	writes := []string{"create_contact", "update_contact", "upsert_contact_by_email", "create_contact_group", "modify_contact_group_members"}
+	got := map[string]*mcp.Tool{}
+	for _, tool := range res.Tools {
+		got[tool.Name] = tool
+	}
+	if len(got) != len(reads)+len(writes)+1 {
+		t.Errorf("tools = %d, want %d", len(got), len(reads)+len(writes)+1)
+	}
+	for _, name := range reads {
+		tool := got[name]
+		if tool == nil || tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s: want readOnlyHint", name)
+		}
+	}
+	for _, name := range writes {
+		tool := got[name]
+		if tool == nil || tool.Annotations == nil || tool.Annotations.ReadOnlyHint ||
+			tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+			t.Errorf("%s: want destructiveHint false", name)
+			continue
+		}
+		if !strings.Contains(tool.Description, "real address book") {
+			t.Errorf("%s: description lacks the address book warning", name)
+		}
+	}
+	del := got["delete_contact"]
+	if del == nil || del.Annotations == nil || del.Annotations.ReadOnlyHint ||
+		del.Annotations.DestructiveHint == nil || !*del.Annotations.DestructiveHint {
+		t.Error("delete_contact: want destructiveHint true")
+	}
+	for name, tool := range got {
+		if tool.OutputSchema == nil {
+			t.Errorf("%s: no output schema", name)
+		}
+	}
+}

@@ -87,6 +87,7 @@ func TestErrorMapping(t *testing.T) {
 		{name: "503 get retried once", route: routeGet, code: 503, status: "UNAVAILABLE", call: getC1, wantHits: 2},
 		{name: "503 create not retried", route: routeCreate, code: 503, status: "UNAVAILABLE", call: createOne, wantHits: 1},
 		{name: "400 other update", route: routeUpdate, code: 400, status: "INVALID_ARGUMENT", call: updateC1, wantHits: 1},
+		{name: "400 bad page token list", route: routeList, code: 400, status: "INVALID_ARGUMENT", call: listBadToken, wantIs: contacts.ErrInvalidArgument, wantHits: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +124,11 @@ func TestErrorMapping(t *testing.T) {
 			}
 		})
 	}
+}
+
+func listBadToken(p contacts.People) error {
+	_, _, err := p.List(context.Background(), 10, "bogus", "")
+	return err
 }
 
 func getC1(p contacts.People) error {
@@ -273,8 +279,8 @@ func TestCreateDeleteAndGroups(t *testing.T) {
 		t.Fatalf("ListGroups: %v", err)
 	}
 	want := []contacts.Group{
-		{ResourceName: "contactGroups/1", Name: "Friends Club", Type: groupTypeUser, MemberCount: 3},
-		{ResourceName: "contactGroups/myContacts", Name: "My Contacts", Type: groupTypeSystem},
+		{ResourceName: "contactGroups/1", Name: "Friends Club", Type: contacts.GroupTypeUser, MemberCount: 3},
+		{ResourceName: "contactGroups/myContacts", Name: "My Contacts", Type: contacts.GroupTypeSystem},
 	}
 	if len(groups) != len(want) || groups[0] != want[0] || groups[1] != want[1] {
 		t.Errorf("ListGroups = %+v, want %+v", groups, want)
@@ -284,7 +290,7 @@ func TestCreateDeleteAndGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	if g.ResourceName != "contactGroups/new" || g.Name != "Investors" || g.Type != groupTypeUser {
+	if g.ResourceName != "contactGroups/new" || g.Name != "Investors" || g.Type != contacts.GroupTypeUser {
 		t.Errorf("CreateGroup = %+v", g)
 	}
 }

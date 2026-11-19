@@ -26,9 +26,6 @@ const (
 	groupFields = "groupType,memberCount,name"
 	// selfResource names the authenticated user in connections.list.
 	selfResource = "people/me"
-	// contactGroupPrefix starts every contact group resource name.
-	contactGroupPrefix = "contactGroups/"
-
 	// maxSearchPageSize is the People API maximum for searchContacts.
 	maxSearchPageSize = 30
 	// maxListPageSize is the People API maximum for connections.list.
@@ -45,11 +42,9 @@ const (
 	// statusFailedPrecondition is the same condition in the v2 error format.
 	statusFailedPrecondition = "FAILED_PRECONDITION"
 
-	// Google contact group types and their contacts.Group.Type values.
+	// Google contact group types, mapped to contacts.GroupTypeUser/System.
 	googleGroupUser   = "USER_CONTACT_GROUP"
 	googleGroupSystem = "SYSTEM_CONTACT_GROUP"
-	groupTypeUser     = "user"
-	groupTypeSystem   = "system"
 )
 
 // peopleClient implements contacts.People for one user.
@@ -226,30 +221,9 @@ func (p *peopleClient) ModifyMembers(ctx context.Context, group string, add, rem
 	return nil
 }
 
-// resolveGroup returns group as-is when it is a resource name, else the one
-// user group whose name matches it case-insensitively.
+// resolveGroup resolves a group resource name or user-group display name.
 func (p *peopleClient) resolveGroup(ctx context.Context, group string) (string, error) {
-	if strings.HasPrefix(group, contactGroupPrefix) {
-		return group, nil
-	}
-	groups, err := p.ListGroups(ctx)
-	if err != nil {
-		return "", err
-	}
-	var matches []string
-	for _, g := range groups {
-		if g.Type == groupTypeUser && strings.EqualFold(g.Name, group) {
-			matches = append(matches, g.ResourceName)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("group %q not found", group)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("group %q is ambiguous (%d matches)", group, len(matches))
-	}
+	return contacts.ResolveGroup(ctx, p, group)
 }
 
 // fromGroup maps a Google contact group. FormattedName is the localized label
@@ -262,9 +236,9 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 	typ := strings.ToLower(g.GroupType)
 	switch g.GroupType {
 	case googleGroupUser:
-		typ = groupTypeUser
+		typ = contacts.GroupTypeUser
 	case googleGroupSystem:
-		typ = groupTypeSystem
+		typ = contacts.GroupTypeSystem
 	}
 	return contacts.Group{ResourceName: g.ResourceName, Name: name, Type: typ, MemberCount: int(g.MemberCount)}
 }
@@ -304,6 +278,8 @@ func mapError(op string, err error) error {
 			return contacts.RateLimitedError{RetryAfter: retryAfter(gerr.Header)}
 		case gerr.Code == http.StatusBadRequest && isFailedPrecondition(gerr):
 			return contacts.ErrConflict
+		case gerr.Code == http.StatusBadRequest:
+			return fmt.Errorf("people %s: google returned HTTP %d: %w", op, gerr.Code, contacts.ErrInvalidArgument)
 		}
 		return fmt.Errorf("people %s: google returned HTTP %d", op, gerr.Code)
 	}

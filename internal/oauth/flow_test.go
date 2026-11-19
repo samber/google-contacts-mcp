@@ -503,6 +503,9 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		len(got.ScopesSupported) != 1 || got.ScopesSupported[0] != "contacts" {
 		t.Errorf("metadata = %+v", got)
 	}
+	if u := e.srv.ResourceMetadataURL(); u != testBaseURL+"/.well-known/oauth-protected-resource" {
+		t.Errorf("ResourceMetadataURL = %q", u)
+	}
 }
 
 func TestFlow_HappyPath(t *testing.T) {

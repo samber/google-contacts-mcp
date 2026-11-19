@@ -15,6 +15,9 @@ var (
 	// ErrUpstreamAuth is returned when the user's Google grant is revoked or
 	// expired; callers answer HTTP 401 instead of a tool error.
 	ErrUpstreamAuth = errors.New("google authorization is no longer valid")
+	// ErrInvalidArgument is returned when Google rejects a request as
+	// malformed (HTTP 400 other than a stale etag), e.g. a bad page token.
+	ErrInvalidArgument = errors.New("invalid argument")
 )
 
 // RateLimitedError reports a Google 429 or a local rate-limit refusal.
