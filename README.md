@@ -133,13 +133,13 @@ Listing a non-Google domain therefore admits only Workspace accounts of that dom
 
 The server keeps the minimum needed to keep you connected. The home page links to a privacy policy (`/privacy`) that says the same thing in plain words.
 
-| Stored                                                                      | Never stored                                                                    |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Your Google account id and e-mail address, with created and last-used dates | Your contacts: names, e-mail addresses, phone numbers, notes or any other field |
-| Your Google refresh and access tokens, encrypted with AES-256-GCM           | Tool inputs and outputs exchanged with your assistant                           |
-| Hashes of the tokens the server issues to your assistant, with their expiry | Any token in clear                                                              |
-| The assistants (OAuth clients) registered with the server                   | Personal data in logs at the default log level (`info`)                         |
-| Sign-ins in progress, which expire after 10 minutes                         |                                                                                 |
+| Stored                                                                                                              | Never stored                                                                    |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Your Google account id and e-mail address, with created and last-used dates                                         | Your contacts: names, e-mail addresses, phone numbers, notes or any other field |
+| Your Google refresh and access tokens, encrypted with AES-256-GCM                                                   | Tool inputs and outputs exchanged with your assistant                           |
+| Hashes of the tokens the server issues to your assistant, with their expiry                                         | Any token in clear                                                              |
+| The assistants (OAuth clients) registered with the server; one that never signs anyone in is deleted after 24 hours | Personal data in logs at the default log level (`info`)                         |
+| Sign-ins in progress, which expire after 10 minutes                                                                 |                                                                                 |
 
 This service's use and transfer of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
 
@@ -274,13 +274,17 @@ ChatGPT also offers scheduled tasks, but whether they can call custom apps such 
 - **One instance only.** SQLite has a single writer. Run exactly one instance; scale up, not out.
 - **Revoked Google access.** The server learns that a grant was revoked (by the user, or expired in Testing mode) only when it next calls Google for that user. On that call, Google refuses the grant, the server deletes the user's data, and the tool fails with "Google access was revoked; reconnect this connector". The assistant's next request is rejected, and it asks the user to sign in again. Every assistant of that user must reconnect. A user who never comes back is removed by the 180-day purge.
 - **Rate limits.** Each user gets 120 read calls and 30 write calls per minute by default. Over the limit, the tool returns an error such as "rate limited, retry after 12s", and the assistant can wait and retry.
+- **Google outages.** When Google cannot be reached (timeout, refused connection, DNS failure), tools fail with "Google is unreachable, retry later". Nothing was sent, so retrying is safe.
+- **Sign-in floods.** Client registration, client metadata fetches and sign-in starts happen before anyone authenticates, so each has a server-wide budget (5 registrations and 5 metadata fetches per second, 20 sign-in starts per second, with bursts). Over budget, registration answers HTTP 429 with `Retry-After` and the sign-in page asks to wait a moment. Real use stays far below these numbers.
 
 ## Security notes
 
 - Each instance is its own OAuth 2.1 authorization server. It accepts only PKCE with S256, binds tokens to the `/mcp` resource (RFC 8707), and returns the issuer on authorization responses (RFC 9207).
 - Issued tokens are opaque; the database stores only their signatures. Access tokens last 1 hour. Refresh tokens rotate on every use, and reusing an old one revokes the whole family. Unused refresh tokens expire after 180 days.
 - Google tokens are encrypted with AES-256-GCM, bound to the user they belong to. Keys rotate with `genkey` and `rekey`.
-- Client metadata documents are fetched over HTTPS from public addresses only, with a 5-second timeout and a 64 KiB cap.
+- Client metadata documents are fetched over HTTPS from public addresses only, with a 5-second timeout and a 64 KiB cap. A cached document is served at most 7 days past its expiry while its host is down, and dropped as soon as the host answers 404, 410 or 400.
+- Registered and fetched clients may list at most 10 redirect URIs of 2 KiB each and a name of 100 characters.
+- Tools accept only `people/c<digits>` contact names and `contactGroups/<id>` group names, so no argument can reach another People API resource.
 - The consent page shows the client's name and the host it will redirect you to, so a malicious client cannot pass itself off as Claude without you seeing where you will land.
 - Logs never contain tokens, codes, secrets or Google responses. Metrics carry no user or client identifiers and sit behind basic authentication.
 - Write tools change your real address book. Clients see `delete_contact` flagged as destructive and the read tools flagged as read-only.

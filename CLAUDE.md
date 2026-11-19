@@ -14,7 +14,7 @@
 - `internal/contacts`: contact model, People API mapping, enrich/merge rules, typed errors.
 - `internal/crypto`: rotatable AES-256-GCM keyring (`keyid:base64`).
 - `internal/google`: Google OAuth exchange, per-user token source, People API client.
-- `internal/jobs`: hourly expired-row cleanup, daily 180-day inactive-user purge.
+- `internal/jobs`: hourly expired-row cleanup, daily 180-day inactive-user purge (guarded against reconnects), and purge of clients unused for 180 days or never used after 24 h.
 - `internal/limits`: per-user read/write token buckets, per-user write lock.
 - `internal/oauth`: authorization server: metadata, CIMD, DCR, consent, Google callback, token, revoke.
 - `internal/obs`: Prometheus metrics, per-call tool logging.
@@ -36,13 +36,13 @@ go test -race ./...
 
 ## Domain jargon
 
-- **CIMD**: Client ID Metadata Document. `client_id` is an `https://` URL; server fetches the JSON (SSRF guard, 5 s, 64 KiB, cached up to 24 h).
+- **CIMD**: Client ID Metadata Document. `client_id` is an `https://` URL; server fetches the JSON (SSRF guard, 5 s, 64 KiB, cached up to 24 h, served stale at most 7 days, dropped on 404/410/400).
 - **DCR**: Dynamic Client Registration (RFC 7591), `POST /oauth/register`, public clients only, `--enable-dcr`.
 - **PKCE**: Proof Key for Code Exchange. S256 only, toward clients and toward Google.
 - **RFC 9207 `iss`**: issuer parameter added to every authorization response.
 - **RFC 8707 `resource`**: must equal `<base-url>/mcp`; tokens get that audience.
 - **RFC 9728**: protected-resource metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp`.
-- **People API `resourceName`**: contact id (`people/c123`); groups are `contactGroups/abc`.
+- **People API `resourceName`**: contact id (`people/c123`); groups are `contactGroups/abc`. Tools accept only these two shapes.
 - **CONTACT source etag**: etag of the person's `CONTACT` source; updates must send the current one, stale etag = `failedPrecondition`.
 - **Testing mode**: unverified Google app; max 100 test users, Google refresh tokens expire 7 days after consent.
 - **Litestream**: replicates the SQLite file to S3 (Cellar); `deploy/start.sh` restores at boot, then runs the server under `litestream replicate -exec`.

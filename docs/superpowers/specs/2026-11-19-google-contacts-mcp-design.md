@@ -107,8 +107,9 @@ Advertise at least:
 
 ### 6.2 Clients
 
-- **CIMD (primary).** When `client_id` is an `https://` URL, `GetClient` fetches the JSON document: HTTPS only, public IPs only (SSRF guard on resolved addresses, no redirects to private ranges), 5 s timeout, 64 KiB cap. It checks that the document's `client_id` equals the URL, and caches the document in SQLite honoring `Cache-Control` (max 24 h). `redirect_uris` match exactly; loopback redirects match ignoring the port (Claude Code).
-- **DCR (legacy, on by default).** Public clients only (`token_endpoint_auth_method: none`). Store `client_name`, `redirect_uris`, `application_type`. Registered clients unused for 180 days are purged.
+- **CIMD (primary).** When `client_id` is an `https://` URL, `GetClient` fetches the JSON document: HTTPS only, public IPs only (SSRF guard on resolved addresses, no redirects to private ranges), 5 s timeout, 64 KiB cap. It checks that the document's `client_id` equals the URL, and caches the document in SQLite honoring `Cache-Control` (max 24 h). `redirect_uris` match exactly; loopback redirects match ignoring the port (Claude Code). A failed refetch serves the cached copy for at most 7 days past its expiry; a definitive 404, 410 or 400 from the client's host deletes the cached copy and fails the client at once.
+- **Unauthenticated write limits.** DCR and CIMD documents are capped at 10 `redirect_uris` of at most 2 KiB each and a `client_name` of at most 100 characters (trimmed); DCR answers `invalid_redirect_uri` or `invalid_client_metadata`, a CIMD document over the caps is an unknown client. Global token buckets (5/s, burst 20 each) bound DCR registrations and cold CIMD fetches: a spent DCR budget answers 429 `{"error":"temporarily_unavailable"}` with `Retry-After`, a spent CIMD budget shows a 429 page on `/oauth/authorize` (no redirect) and serves the stale cached copy on token refresh when there is one. `GET /oauth/authorize`, which writes a pending authorization, has its own global bucket (20/s, burst 100) and shows the same 429 page.
+- **DCR (legacy, on by default).** Public clients only (`token_endpoint_auth_method: none`). Store `client_name`, `redirect_uris`, `application_type`. Registered clients unused for 180 days are purged, and clients that never obtained a token are purged after 24 hours.
 - Claude's discovery, registration and token calls time out at 10 s; every endpoint must answer well under that, including a cold CIMD fetch.
 
 ### 6.3 Authorization flow
@@ -143,7 +144,7 @@ Advertise at least:
 
 All tools act on the authenticated user's own contacts only. Results carry structured content plus a short text summary. Annotations: read tools `readOnlyHint: true`; `delete_contact` `destructiveHint: true`; other write tools `destructiveHint: false`. Write tools also note in their description that they change the user's real address book.
 
-Contact fields handled in v1: names (given, family, display), e-mails, phones, organization (company, job title), websites (LinkedIn stored as a website of type `linkedin`), postal addresses, notes (biography), group memberships. Each multi-valued item has a `type` (home, work, mobile, ...). Contacts are identified by `resourceName` (`people/c123`).
+Contact fields handled in v1: names (given, family, display), e-mails, phones, organization (company, job title), websites (LinkedIn stored as a website of type `linkedin`), postal addresses, notes (biography), group memberships. Each multi-valued item has a `type` (home, work, mobile, ...). Contacts are identified by `resourceName` (`people/c123`). Tools accept only `people/c<digits>` for contacts and `contactGroups/<letters, digits, _ or ->` for group resource names; anything else (`people/me`, query strings, dot segments) is refused before Google is called. For a contact linked to a Google profile, names, organization and notes are read from the contact's own (`CONTACT`-source) entries first, and writes send only `CONTACT`-source entries: profile entries stay readable but are never copied into the contact.
 
 | Tool | Behavior |
 | --- | --- |
@@ -181,6 +182,7 @@ Known limit: search is eventually consistent after writes. Two upserts of the sa
 - Google 429, or our own rate limit: tool error "rate limited, retry after N s".
 - Google 404 on a resource name: "contact not found".
 - Google 5xx: tool error with Google's status; no automatic retry beyond one for idempotent reads.
+- Google unreachable (timeout, refused connection, DNS failure): "Google is unreachable, retry later", logged at warn with the network cause and never the request URL. A call the client canceled is logged at info with status `canceled`.
 - Upstream token dead (People API 401, then `invalid_grant` on the forced refresh): the user's rows are deleted and the tool error is "Google access was revoked; reconnect this connector"; the next MCP request gets HTTP 401 (section 7).
 
 ## 9. Rate limiting
@@ -199,7 +201,7 @@ SQLite, WAL mode. Stored:
 
 Never stored: contacts, names, phone numbers, notes, tool inputs and outputs, any token in clear.
 
-Background job, hourly: delete expired fosite rows and pending authorizations. Daily: purge users inactive for 180 days (delete rows and revoke the Google token at Google's revoke endpoint).
+Background job, hourly: delete expired fosite rows and pending authorizations. Daily: purge users inactive for 180 days (delete rows and revoke the Google token at Google's revoke endpoint), clients unused for 180 days, and clients that never obtained a token within 24 hours. The user delete re-checks `last_seen_at` and the stored refresh token in one transaction, and the revoke runs only after it succeeded, so a user who reconnects while the purge runs keeps their account and grant. Every disconnection logs `user disconnected` at info with `user_id` and `reason` (`inactive`, `google_revoked` or `cli`), never the e-mail.
 
 Schema migrations embedded in the binary, applied at start, numbered sequentially.
 
@@ -207,6 +209,7 @@ Schema migrations embedded in the binary, applied at start, numbered sequentiall
 
 - Operator: Samuel Berthe, personally. Host: `google-contacts-mcp.samber.dev`.
 - The server serves `/` (what it is, link to repo, how to connect) and `/privacy` from embedded templates. Operator name and contact e-mail come from `--operator-name` and `--operator-email` (my call: Google verification needs both pages on the verified domain; embedding them keeps self-hosters compliant too).
+- `/privacy` states: "This service's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements", linking to `https://developers.google.com/terms/api-services-user-data-policy`.
 - Launch in Google Testing mode (100 users, weekly re-consent), announce widely once verification passes.
 - Test users are added by hand in Cloud Console. The home page says "early access: e-mail <operator-email> to join". When Google returns `access_denied` on the callback (user not on the test list, or user declined), the error page shows the same message. Nothing about access requests is stored.
 
