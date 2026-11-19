@@ -205,3 +205,24 @@ func TestJobs_StopsOnCancel(t *testing.T) {
 	stop := startRun(t, f, time.Now)
 	stop()
 }
+
+// TestPurgeUser_ReconnectedMeanwhileKept covers a user listed as inactive who
+// reconnects before purgeUser runs: their last_seen_at is now past the cutoff.
+func TestPurgeUser_ReconnectedMeanwhileKept(t *testing.T) {
+	rv := newFakeRevoke(t, http.StatusOK)
+	f := newFixture(t, rv)
+	cutoff := time.Now().Add(-time.Hour)
+	for _, u := range []store.User{f.withToken, f.withoutToken} {
+		purgeUser(context.Background(), f.st, f.up, u.ID, cutoff)
+		if _, err := f.st.UserBySubOrEmail(context.Background(), u.GoogleSub); err != nil {
+			t.Errorf("reconnected user %s deleted: %v", u.ID, err)
+		}
+	}
+	if got := rv.revoked(); len(got) != 0 {
+		t.Errorf("revoked = %q, want none for a reconnected user", got)
+	}
+	tok, err := f.st.GoogleToken(context.Background(), f.withToken.ID)
+	if err != nil || tok.RefreshToken != "refresh-a" {
+		t.Errorf("GoogleToken = %+v, %v; want the grant kept", tok, err)
+	}
+}

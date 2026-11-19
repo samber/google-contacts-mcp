@@ -357,6 +357,70 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) (err error) {
 	return nil
 }
 
+// DeleteUserIfInactive deletes the user like DeleteUser, but only while they
+// are still last seen strictly before cutoff and their stored refresh token
+// still equals *expectedRefresh ("" meaning no stored token), and reports
+// whether it did. expectedRefresh is nullable: nil skips the token check, for
+// a token that cannot be read (sealed under a retired key). The inactivity purge reads the user's token, then deletes:
+// a user who reconnected in between (new last_seen_at, new grant) must keep
+// their account. The checks and the delete run in one immediate transaction.
+func (s *Store) DeleteUserIfInactive(ctx context.Context, userID string, cutoff time.Time, expectedRefresh *string) (deleted bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: delete inactive user: begin: %w", err)
+	}
+	defer func() {
+		if err != nil || !deleted {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	var lastSeen int64
+	err = tx.QueryRowContext(ctx, `SELECT last_seen_at FROM users WHERE id = ?`, userID).Scan(&lastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: delete inactive user: %w", err)
+	}
+	if lastSeen >= cutoff.Unix() {
+		return false, nil
+	}
+	match := true
+	switch {
+	case expectedRefresh == nil:
+	case *expectedRefresh == "":
+		match, err = s.hasNoGoogleToken(ctx, tx, userID)
+	default:
+		match, err = s.refreshMatches(ctx, tx, userID, *expectedRefresh)
+	}
+	if err != nil || !match {
+		return false, err
+	}
+	for _, query := range deleteUserChildren {
+		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
+			return false, fmt.Errorf("store: delete user rows: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID); err != nil {
+		return false, fmt.Errorf("store: delete inactive user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: delete inactive user: commit: %w", err)
+	}
+	s.forgetTouch(userID)
+	return true, nil
+}
+
+// hasNoGoogleToken reports whether userID has no stored Google token row.
+func (s *Store) hasNoGoogleToken(ctx context.Context, tx *sql.Tx, userID string) (bool, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM google_tokens WHERE user_id = ?`, userID).Scan(&n); err != nil {
+		return false, fmt.Errorf("store: count google tokens: %w", err)
+	}
+	return n == 0, nil
+}
+
 // InactiveUsers lists users last seen strictly before the cutoff.
 func (s *Store) InactiveUsers(ctx context.Context, before time.Time) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,

@@ -549,3 +549,53 @@ func TestDeleteUserIfRefresh(t *testing.T) {
 		t.Errorf("unknown user: deleted %v, err %v; want false, nil", ok, err)
 	}
 }
+
+func TestDeleteUserIfInactive(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	base := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return base }
+	u, err := s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if err := s.SaveGoogleToken(ctx, u.ID, GoogleToken{RefreshToken: "r1", AccessToken: "a1"}); err != nil {
+		t.Fatalf("SaveGoogleToken: %v", err)
+	}
+	ptr := func(v string) *string { return &v }
+	cutoff := base.Add(time.Hour)
+
+	// Reconnected: last_seen_at moved to the cutoff or past it.
+	if ok, err := s.DeleteUserIfInactive(ctx, u.ID, base, ptr("r1")); err != nil || ok {
+		t.Fatalf("last seen at cutoff: deleted %v, err %v; want false, nil", ok, err)
+	}
+	// Reconnected: a new consent replaced the refresh token.
+	if ok, err := s.DeleteUserIfInactive(ctx, u.ID, cutoff, ptr("r0")); err != nil || ok {
+		t.Fatalf("token changed: deleted %v, err %v; want false, nil", ok, err)
+	}
+	// A token appeared where none was read.
+	if ok, err := s.DeleteUserIfInactive(ctx, u.ID, cutoff, ptr("")); err != nil || ok {
+		t.Fatalf("token appeared: deleted %v, err %v; want false, nil", ok, err)
+	}
+	if _, err := s.UserBySubOrEmail(ctx, "sub-1"); err != nil {
+		t.Fatalf("user gone after refused deletes: %v", err)
+	}
+	if ok, err := s.DeleteUserIfInactive(ctx, u.ID, cutoff, ptr("r1")); err != nil || !ok {
+		t.Fatalf("still inactive: deleted %v, err %v; want true, nil", ok, err)
+	}
+	if _, err := s.GoogleToken(ctx, u.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("google token kept: %v", err)
+	}
+	if ok, err := s.DeleteUserIfInactive(ctx, u.ID, cutoff, nil); err != nil || ok {
+		t.Errorf("missing user: deleted %v, err %v; want false, nil", ok, err)
+	}
+
+	// No token, nil guard: last_seen_at alone decides.
+	v, err := s.UpsertUser(ctx, "sub-2", "b@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if ok, err := s.DeleteUserIfInactive(ctx, v.ID, cutoff, nil); err != nil || !ok {
+		t.Errorf("nil guard: deleted %v, err %v; want true, nil", ok, err)
+	}
+}

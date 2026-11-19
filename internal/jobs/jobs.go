@@ -75,7 +75,7 @@ func purge(ctx context.Context, st *store.Store, rv Revoker, now func() time.Tim
 		if ctx.Err() != nil {
 			return
 		}
-		purgeUser(ctx, st, rv, u.ID)
+		purgeUser(ctx, st, rv, u.ID, cutoff)
 	}
 
 	n, err := st.PurgeUnusedClients(ctx, cutoff, now().Add(-neverUsedClientWindow))
@@ -88,28 +88,45 @@ func purge(ctx context.Context, st *store.Store, rv Revoker, now func() time.Tim
 	}
 }
 
-// purgeUser revokes the user's Google grant when one is stored, then deletes
-// the user. A failed revoke or token read only warns: the local data must go
-// regardless, and the user can still revoke from their Google account page.
-func purgeUser(ctx context.Context, st *store.Store, rv Revoker, userID string) {
+// purgeUser deletes an inactive user, then revokes the Google grant read
+// just before. The delete is guarded: a user who reconnected since
+// InactiveUsers ran (newer last_seen_at, or a new refresh token) is kept, and
+// their grant is not revoked. Revoking after the delete means the token
+// revoked is exactly the one deleted. A token that cannot be read (sealed
+// under a retired key) is not revoked and does not block the purge: the local
+// data must go regardless. A failed revoke only warns, for the same reason;
+// the user can still revoke from their Google account page.
+func purgeUser(ctx context.Context, st *store.Store, rv Revoker, userID string, cutoff time.Time) {
+	refresh := ""
+	// expected is nullable: nil deletes without comparing the stored token.
+	expected := &refresh
 	tok, err := st.GoogleToken(ctx, userID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
 		slog.WarnContext(ctx, "jobs: read google token, deleting user without revoking",
 			slog.String("user_id", userID), slog.Any("error", err))
-	case tok.RefreshToken == "":
+		expected = nil
 	default:
-		if err := rv.Revoke(ctx, tok.RefreshToken); err != nil {
-			slog.WarnContext(ctx, "jobs: google revoke failed, deleting user anyway",
-				slog.String("user_id", userID), slog.Any("error", err))
-		}
+		refresh = tok.RefreshToken
 	}
-	if err := st.DeleteUser(ctx, userID); err != nil {
+	deleted, err := st.DeleteUserIfInactive(ctx, userID, cutoff, expected)
+	if err != nil {
 		logError(ctx, "jobs: delete inactive user", err, slog.String("user_id", userID))
 		return
 	}
+	if !deleted {
+		slog.InfoContext(ctx, "jobs: user active again, not purged", slog.String("user_id", userID))
+		return
+	}
 	slog.InfoContext(ctx, "user disconnected", slog.String("user_id", userID), slog.String("reason", "inactive"))
+	if refresh == "" {
+		return
+	}
+	if err := rv.Revoke(ctx, refresh); err != nil {
+		slog.WarnContext(ctx, "jobs: google revoke failed after deleting the user",
+			slog.String("user_id", userID), slog.Any("error", err))
+	}
 }
 
 // logError logs a job failure, except the expected one when shutdown
