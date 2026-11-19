@@ -406,12 +406,36 @@ func TestSlowResponse(t *testing.T) {
 
 func TestErrorsNeverCarryQuery(t *testing.T) {
 	env := newTestEnv(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	p := env.people(t)
-	cancel()
-	_, err := p.Search(ctx, "secret-name", 5)
+	// Skip the warmup so the failing request is the one carrying the query.
+	env.up.warmed.Store(env.userID, true)
+	// Dropping the connection makes net/http return a *url.Error, whose text
+	// holds the request URL; a cancelled context would not, since gensupport
+	// then returns the bare context error.
+	env.fake.override = func(w http.ResponseWriter, _ *http.Request, rt string) bool {
+		if rt != routeSearch {
+			return false
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response writer is not a Hijacker")
+			return false
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("Hijack: %v", err)
+			return true
+		}
+		if err := conn.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+		return true
+	}
+	_, err := env.people(t).Search(context.Background(), "secret-name", 5)
 	if err == nil {
 		t.Fatal("err = nil")
+	}
+	if n := env.fake.count(routeSearch); n < 1 {
+		t.Fatalf("search calls = %d, want the real query sent", n)
 	}
 	if strings.Contains(err.Error(), "secret-name") {
 		t.Errorf("error leaks the search query: %v", err)
