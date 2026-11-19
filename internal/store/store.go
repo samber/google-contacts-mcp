@@ -25,9 +25,14 @@ import (
 const (
 	// driverName is the database/sql name registered by modernc.org/sqlite.
 	driverName = "sqlite"
-	// dsnPragmas apply to every pooled connection: WAL for concurrent readers,
-	// enforced foreign keys for ON DELETE CASCADE, and a 5 s wait on a locked file.
-	dsnPragmas = "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	// dsnPragmas apply to every pooled connection: WAL for concurrent readers;
+	// enforced foreign keys so no child row outlives its user; a 5 s wait on a
+	// locked file; secure_delete so freed pages holding ciphertext are zeroed;
+	// and _txlock=immediate so a write transaction takes the write lock at
+	// BEGIN, waiting on busy_timeout instead of failing with SQLITE_BUSY when
+	// another process (rekey beside serve) committed after its snapshot.
+	dsnPragmas = "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
+		"&_pragma=secure_delete(1)&_txlock=immediate"
 	// dsnQuerySep starts the DSN query string, so it cannot appear in the path.
 	dsnQuerySep = "?"
 	// dirMode keeps the data directory private to the service user.
