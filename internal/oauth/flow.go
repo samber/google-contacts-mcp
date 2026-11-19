@@ -603,15 +603,20 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	h := w.Header()
+	SetPageHeaders(w.Header())
+	w.WriteHeader(status)
+	if _, err := buf.WriteTo(w); err != nil {
+		s.log.DebugContext(r.Context(), "oauth: write page", slog.Any("error", err))
+	}
+}
+
+// SetPageHeaders sets the content type and security headers shared by every
+// HTML page the server renders: no script, no framing, no caching, no Referer.
+func SetPageHeaders(h http.Header) {
 	h.Set("Content-Type", mediaTypeHTML)
 	h.Set("Cache-Control", cacheControlNoStore)
 	h.Set("Content-Security-Policy", headerCSP)
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", headerNoReferer)
-	w.WriteHeader(status)
-	if _, err := buf.WriteTo(w); err != nil {
-		s.log.DebugContext(r.Context(), "oauth: write page", slog.Any("error", err))
-	}
 }

@@ -9,7 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
 	"github.com/samber/google-contacts-mcp/internal/crypto"
@@ -78,7 +80,9 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		case config.CmdDisconnect:
 			err = runDisconnect(context.Background(), cfg, stdout)
 		default:
-			err = fmt.Errorf("%s: not implemented", cmd)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			err = runServe(ctx, cfg, stdout)
+			stop()
 		}
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, err)
