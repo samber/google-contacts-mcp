@@ -43,6 +43,21 @@ func (e UpstreamStatusError) Error() string {
 	return fmt.Sprintf("people %s: google returned HTTP %d", e.Op, e.Status)
 }
 
+// UnreachableError reports a People API call that got no answer from Google:
+// a timeout, a refused or dropped connection, a DNS failure. Err is the
+// network-level cause only, never the request URL, which can hold a search
+// query.
+type UnreachableError struct {
+	Op  string
+	Err error
+}
+
+func (e UnreachableError) Error() string {
+	return fmt.Sprintf("people %s: google unreachable: %v", e.Op, e.Err)
+}
+
+func (e UnreachableError) Unwrap() error { return e.Err }
+
 // GroupError reports a group name that matched no user group (Matches 0) or
 // several. It names only the group the caller gave.
 type GroupError struct {

@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -494,5 +499,69 @@ func TestUpstreamStatusError(t *testing.T) {
 	}
 	if callStatus(errors.New("dial tcp: refused")) != statusNoResponse {
 		t.Fatal("transport error must report no status")
+	}
+}
+
+func TestMapError_TransportErrors(t *testing.T) {
+	const queryURL = "https://people.googleapis.com/v1/people:searchContacts?query=private-name"
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"dns", &url.Error{Op: "Get", URL: queryURL, Err: &net.OpError{Op: "dial", Net: "tcp",
+			Err: &net.DNSError{Err: "no such host", Name: "people.googleapis.com", IsNotFound: true}}}},
+		{"refused", &url.Error{Op: "Get", URL: queryURL, Err: &net.OpError{Op: "dial", Net: "tcp",
+			Err: syscall.ECONNREFUSED}}},
+		{"client timeout", &url.Error{Op: "Get", URL: queryURL, Err: os.ErrDeadlineExceeded}},
+		{"dropped", &url.Error{Op: "Get", URL: queryURL, Err: io.EOF}},
+		{"deadline", context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := mapError(opSearch, tc.err)
+			var ue contacts.UnreachableError
+			if !errors.As(err, &ue) {
+				t.Fatalf("mapError = %T %v, want UnreachableError", err, err)
+			}
+			if strings.Contains(err.Error(), "private-name") || strings.Contains(err.Error(), "https://") {
+				t.Errorf("error carries the URL: %v", err)
+			}
+		})
+	}
+	// Google answered: not a transport error.
+	if err := mapError(opSearch, &url.Error{Op: "Get", URL: queryURL, Err: errors.New("token endpoint returned HTTP 400")}); errors.As(err, new(contacts.UnreachableError)) {
+		t.Errorf("non-network url.Error mapped to unreachable: %v", err)
+	}
+}
+
+func TestMapError_Canceled(t *testing.T) {
+	err := mapError(opGet, context.Canceled)
+	if !errors.Is(err, context.Canceled) || errors.As(err, new(contacts.UnreachableError)) {
+		t.Errorf("mapError(canceled) = %v, want context.Canceled, not unreachable", err)
+	}
+}
+
+func TestGet_ConnectionRefusedIsUnreachable(t *testing.T) {
+	env := newTestEnv(t)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	env.up.peopleURL = closed.URL + "/"
+	_, err := env.people(t).Get(context.Background(), "people/c1")
+	var ue contacts.UnreachableError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %T %v, want UnreachableError", err, err)
+	}
+	if strings.Contains(err.Error(), "people/c1") || strings.Contains(err.Error(), "http://") {
+		t.Errorf("error carries the request URL: %v", err)
+	}
+}
+
+func TestGet_CanceledContext(t *testing.T) {
+	env := newTestEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := env.people(t).Get(ctx, "people/c1")
+	if !errors.Is(err, context.Canceled) || errors.As(err, new(contacts.UnreachableError)) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }

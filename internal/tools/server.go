@@ -30,13 +30,19 @@ const (
 )
 
 // Tool error messages returned to the assistant (spec §8.2). They never carry
-// tool arguments or results, since Task 11 logs tool errors at info.
+// tool arguments or results, since tool errors are logged at info.
 const (
 	msgContactNotFound = "contact not found"
 	msgGroupNotFound   = "group not found"
 	msgUpstreamAuth    = "Google access was revoked; reconnect this connector"
 	msgNoUser          = "internal error: no authenticated user"
 	msgInvalidArgument = "invalid argument"
+	// msgUnreachable covers timeouts, refused connections and DNS failures:
+	// nothing reached Google, so the call is safe to retry.
+	msgUnreachable = "Google is unreachable, retry later"
+	// msgCanceled answers a call the client canceled; it rarely reaches the
+	// client, which stopped waiting.
+	msgCanceled = "canceled"
 	// msgInternal replaces any error whose text was not built to be shown;
 	// the middleware logs the real cause.
 	msgInternal = "internal error"
@@ -47,6 +53,7 @@ const (
 	statusOK          = "ok"
 	statusError       = "error"
 	statusRateLimited = "rate_limited"
+	statusCanceled    = "canceled"
 )
 
 // Rate-limit kinds of the rate_limited metric: the local read and write
@@ -212,13 +219,20 @@ func (d Deps) finishCall(ctx context.Context, rec callRecord) {
 	case isToolError && te.rateKind != "":
 		status, count = statusRateLimited, 0
 		d.Metrics.RateLimited(te.rateKind)
+	case isToolError && te.canceled:
+		status, count = statusCanceled, 0
 	case rec.err != nil:
 		status, count = statusError, 0
 	}
 	if isToolError && te.cause != nil {
 		// The cause comes from our code or Google's status, never from the
-		// tool arguments or a token.
-		log.ErrorContext(ctx, "tool call failed",
+		// tool arguments or a token. An unreachable Google is an outage to
+		// watch, not a bug in this server.
+		level := slog.LevelError
+		if te.unreachable {
+			level = slog.LevelWarn
+		}
+		log.Log(ctx, level, "tool call failed",
 			slog.String("tool", rec.tool), slog.String("user_id", rec.userID), slog.Any("error", te.cause))
 	}
 	attrs := []slog.Attr{
@@ -269,6 +283,10 @@ type toolError struct {
 	cause error
 	// rateKind is set when a rate limit refused the call.
 	rateKind string
+	// unreachable marks a call that got no answer from Google.
+	unreachable bool
+	// canceled marks a call whose context the client canceled.
+	canceled bool
 }
 
 func (e *toolError) Error() string { return e.msg }
@@ -294,9 +312,14 @@ func mapError(err error, notFound string) error {
 	var rl contacts.RateLimitedError
 	var us contacts.UpstreamStatusError
 	var ge contacts.GroupError
+	var ue contacts.UnreachableError
 	switch {
 	case errors.As(err, &te):
 		return te
+	case errors.Is(err, context.Canceled):
+		return &toolError{msg: msgCanceled, canceled: true}
+	case errors.As(err, &ue):
+		return &toolError{msg: msgUnreachable, cause: ue, unreachable: true}
 	case errors.As(err, &rl):
 		return &toolError{msg: rl.Error(), rateKind: rateKindGoogle}
 	case errors.Is(err, contacts.ErrUpstreamAuth):

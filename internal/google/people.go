@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -363,11 +365,41 @@ func mapError(op string, err error) error {
 		}
 		return contacts.UpstreamStatusError{Op: op, Status: gerr.Code}
 	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("people %s: %w", op, context.Canceled)
+	}
+	if cause := transportCause(err); cause != nil {
+		return contacts.UnreachableError{Op: op, Err: cause}
+	}
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		return fmt.Errorf("people %s: %w", op, uerr.Err)
 	}
 	return fmt.Errorf("people %s: %w", op, err)
+}
+
+// errNoAnswer stands for a call that timed out or whose connection dropped
+// before Google answered.
+var errNoAnswer = errors.New("no answer before the connection closed or timed out")
+
+// transportCause returns the network-level reason a call got no answer from
+// Google, or nil when err is something else. The result never wraps a
+// *url.Error, whose text holds the request URL.
+func transportCause(err error) error {
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var uerr *url.Error
+	switch {
+	case errors.As(err, &dnsErr):
+		return dnsErr
+	case errors.As(err, &opErr):
+		return opErr
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%w: %w", errNoAnswer, context.DeadlineExceeded)
+	case errors.As(err, &uerr) && (uerr.Timeout() || errors.Is(uerr.Err, io.EOF) || errors.Is(uerr.Err, io.ErrUnexpectedEOF)):
+		return errNoAnswer
+	}
+	return nil
 }
 
 // retryAfter parses Retry-After as seconds or an HTTP date.

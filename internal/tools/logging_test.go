@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -282,5 +283,40 @@ func TestMapError_KnownErrorsPassThrough(t *testing.T) {
 		if got.Error() != c.want {
 			t.Errorf("mapError(%v) = %q, want %q", c.err, got.Error(), c.want)
 		}
+	}
+}
+
+func TestToolLog_GoogleUnreachable(t *testing.T) {
+	h, buf := logHarness(t, slog.LevelInfo)
+	cause := contacts.UnreachableError{Op: "search", Err: errors.New("dial tcp 142.250.0.1:443: connect: connection refused")}
+	h.people.setErr("Search", cause)
+	h.fail("search_contacts", map[string]any{"query": "secret-query"}, msgUnreachable)
+
+	if rec := toolLine(t, buf, "search_contacts"); rec["status"] != "error" {
+		t.Errorf("status = %v, want error", rec["status"])
+	}
+	failed := buf.lines(t, "tool call failed")
+	if len(failed) != 1 || failed[0]["level"] != "WARN" || failed[0]["error"] != cause.Error() {
+		t.Fatalf("tool call failed lines = %v, want one WARN line with the cause", failed)
+	}
+	if strings.Contains(buf.String(), "secret-query") || strings.Contains(buf.String(), "https://") {
+		t.Errorf("logs contain the query or a URL:\n%s", buf.String())
+	}
+}
+
+func TestToolLog_CanceledIsInfo(t *testing.T) {
+	h, buf := logHarness(t, slog.LevelInfo)
+	h.people.setErr("Search", fmt.Errorf("people search: %w", context.Canceled))
+	h.fail("search_contacts", map[string]any{"query": "q"}, msgCanceled)
+
+	rec := toolLine(t, buf, "search_contacts")
+	if rec["status"] != statusCanceled || rec["level"] != "INFO" {
+		t.Errorf("tool call line = %v, want INFO with status canceled", rec)
+	}
+	if failed := buf.lines(t, "tool call failed"); len(failed) != 0 {
+		t.Errorf("canceled call logged as a failure: %v", failed)
+	}
+	if strings.Contains(buf.String(), `"level":"ERROR"`) {
+		t.Errorf("canceled call logged at error:\n%s", buf.String())
 	}
 }
