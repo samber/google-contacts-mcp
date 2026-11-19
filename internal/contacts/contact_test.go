@@ -50,7 +50,7 @@ func fullPerson() *people.Person {
 }
 
 func TestFromPerson_Full(t *testing.T) {
-	got := FromPerson(fullPerson())
+	got := withoutRaw(FromPerson(fullPerson()))
 	want := Contact{
 		ResourceName: "people/c123",
 		Etag:         "etag-1",
@@ -86,7 +86,7 @@ func TestFromPerson_Full(t *testing.T) {
 }
 
 func TestFromPerson_EmptyPerson(t *testing.T) {
-	if got := FromPerson(&people.Person{}); !reflect.DeepEqual(got, Contact{}) {
+	if got := withoutRaw(FromPerson(&people.Person{})); !reflect.DeepEqual(got, Contact{}) {
 		t.Fatalf("FromPerson(empty) = %#v, want zero Contact", got)
 	}
 	if got := FromPerson(nil); !reflect.DeepEqual(got, Contact{}) {
@@ -99,16 +99,16 @@ func TestFromPerson_EmptyPerson(t *testing.T) {
 		Biographies:   []*people.Biography{nil},
 		Memberships:   []*people.Membership{nil, {}},
 	}
-	if got := FromPerson(p); !reflect.DeepEqual(got, Contact{}) {
+	if got := withoutRaw(FromPerson(p)); !reflect.DeepEqual(got, Contact{}) {
 		t.Fatalf("FromPerson(nil entries) = %#v, want zero Contact", got)
 	}
 }
 
 func TestToPerson_RoundTrip(t *testing.T) {
-	c := FromPerson(fullPerson())
+	c := withoutRaw(FromPerson(fullPerson()))
 	// DisplayName is output-only in the People API, so ToPerson never sends it.
 	c.DisplayName = ""
-	got := FromPerson(c.ToPerson())
+	got := withoutRaw(FromPerson(c.ToPerson()))
 	if !reflect.DeepEqual(got, c) {
 		t.Fatalf("round trip mismatch:\n got %#v\nwant %#v", got, c)
 	}
@@ -141,6 +141,203 @@ func TestToPerson_SetsEtagSource(t *testing.T) {
 	}
 	if p := (Contact{}).ToPerson(); p.Metadata != nil {
 		t.Fatalf("Metadata = %#v without etag, want nil", p.Metadata)
+	}
+
+	// Fetched person: only the CONTACT source is sent, with its id and etag.
+	fetched := FromPerson(&people.Person{
+		ResourceName: "people/c1",
+		Etag:         "P",
+		Metadata: &people.PersonMetadata{
+			ObjectType: "PERSON",
+			Sources: []*people.Source{
+				{Type: "PROFILE", Id: "prof", Etag: "PE"},
+				{Type: sourceTypeContact, Id: "abc123", Etag: "C"},
+			},
+		},
+	})
+	p = fetched.ToPerson()
+	want := []*people.Source{{Type: sourceTypeContact, Id: "abc123", Etag: "C"}}
+	if p.Metadata == nil || !reflect.DeepEqual(p.Metadata.Sources, want) {
+		t.Fatalf("Metadata = %#v, want sources %#v", p.Metadata, want)
+	}
+}
+
+func withoutRaw(c Contact) Contact {
+	c.raw = nil
+	return c
+}
+
+func TestFromPerson_EtagFromContactSource(t *testing.T) {
+	p := &people.Person{
+		Etag: "P",
+		Metadata: &people.PersonMetadata{Sources: []*people.Source{
+			{Type: "PROFILE", Etag: "PE"},
+			{Type: sourceTypeContact, Id: "abc", Etag: "C"},
+		}},
+	}
+	if got := FromPerson(p).Etag; got != "C" {
+		t.Fatalf("Etag = %q, want C", got)
+	}
+	// No CONTACT source: fall back to the person etag.
+	p.Metadata.Sources = p.Metadata.Sources[:1]
+	if got := FromPerson(p).Etag; got != "P" {
+		t.Fatalf("Etag = %q, want P", got)
+	}
+}
+
+func TestToPerson_PreservesExtraOrganizationsAndSubfields(t *testing.T) {
+	start := &people.Date{Year: 2020, Month: 1, Day: 2}
+	c := FromPerson(&people.Person{Organizations: []*people.Organization{
+		{Name: "Acme", Department: "R&D", Type: "work", StartDate: start, Current: true},
+		{Name: "Old Corp", Title: "Intern"},
+	}})
+	c.JobTitle = "CTO"
+	got := c.ToPerson().Organizations
+	want := []*people.Organization{
+		{Name: "Acme", Title: "CTO", Department: "R&D", Type: "work", StartDate: start, Current: true},
+		{Name: "Old Corp", Title: "Intern"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("organizations:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+func TestToPerson_PreservesNameSubfields(t *testing.T) {
+	c := FromPerson(&people.Person{Names: []*people.Name{{
+		GivenName: "Ada", MiddleName: "King", HonorificPrefix: "Lady",
+		HonorificSuffix: "Countess", PhoneticGivenName: "Ay-da",
+	}}})
+	c.FamilyName = "Lovelace"
+	got := c.ToPerson().Names
+	want := []*people.Name{{
+		GivenName: "Ada", FamilyName: "Lovelace", MiddleName: "King", HonorificPrefix: "Lady",
+		HonorificSuffix: "Countess", PhoneticGivenName: "Ay-da",
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("names:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+func TestToPerson_ReusesMatchingAddressEntry(t *testing.T) {
+	c := FromPerson(&people.Person{Addresses: []*people.Address{{
+		FormattedValue: "1 Main St, London", ExtendedAddress: "Flat 2", PoBox: "PO 9",
+		CountryCode: "GB", Type: "home",
+	}}})
+	c, _ = Enrich(c, Contact{Addresses: []Address{{Formatted: "2 High St", Type: "work"}}})
+	got := c.ToPerson().Addresses
+	want := []*people.Address{
+		{FormattedValue: "1 Main St, London", ExtendedAddress: "Flat 2", PoBox: "PO 9", CountryCode: "GB", Type: "home"},
+		{FormattedValue: "2 High St", Type: "work"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("addresses:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+func TestToPerson_PreservesPrimaryFlag(t *testing.T) {
+	primary := &people.FieldMetadata{Primary: true}
+	c := FromPerson(&people.Person{
+		EmailAddresses: []*people.EmailAddress{{Value: "a@b.com", Type: "work", Metadata: primary}},
+		PhoneNumbers:   []*people.PhoneNumber{{Value: "+33 6 12", CanonicalForm: "+33612", Metadata: primary}},
+		Urls:           []*people.Url{{Value: "https://a.example", Metadata: primary}},
+	})
+	c.Emails[0].Type = "home"
+	p := c.ToPerson()
+	if e := p.EmailAddresses[0]; e.Metadata != primary || e.Type != "home" || e.Value != "a@b.com" {
+		t.Fatalf("email = %#v, want primary kept and type updated", e)
+	}
+	if ph := p.PhoneNumbers[0]; ph.Metadata != primary || ph.CanonicalForm != "+33612" {
+		t.Fatalf("phone = %#v, want primary and canonical form kept", ph)
+	}
+	if u := p.Urls[0]; u.Metadata != primary {
+		t.Fatalf("url = %#v, want primary kept", u)
+	}
+}
+
+func TestToPerson_KeepsSystemMemberships(t *testing.T) {
+	c := FromPerson(fullPerson())
+	c.Groups = []string{"contactGroups/new"}
+	var got []string
+	domain := 0
+	for _, m := range c.ToPerson().Memberships {
+		if m.DomainMembership != nil {
+			domain++
+			continue
+		}
+		got = append(got, m.ContactGroupMembership.ContactGroupResourceName)
+	}
+	want := []string{"contactGroups/myContacts", "contactGroups/new"}
+	if !reflect.DeepEqual(got, want) || domain != 1 {
+		t.Fatalf("memberships = %v (domain %d), want %v and 1 domain", got, domain, want)
+	}
+}
+
+func TestToPerson_DropsRemovedEmail(t *testing.T) {
+	c := FromPerson(fullPerson())
+	c.Emails = []Typed{{Value: "ada@home.example", Type: "home"}}
+	got := c.ToPerson().EmailAddresses
+	if len(got) != 1 || got[0].Value != "ada@home.example" {
+		t.Fatalf("emails = %#v, want only ada@home.example", got)
+	}
+}
+
+func TestToPerson_DoesNotMutateFetchedPerson(t *testing.T) {
+	p := fullPerson()
+	c := FromPerson(p)
+	c.GivenName, c.Emails[0].Type = "Changed", "other"
+	_ = c.ToPerson()
+	if !reflect.DeepEqual(p, fullPerson()) {
+		t.Fatalf("source person mutated: %#v", p)
+	}
+}
+
+func TestEnrichThenToPerson_NoDataLoss(t *testing.T) {
+	primary := &people.FieldMetadata{Primary: true}
+	rich := func() *people.Person {
+		return &people.Person{
+			ResourceName: "people/c9",
+			Etag:         "P",
+			Metadata: &people.PersonMetadata{Sources: []*people.Source{
+				{Type: sourceTypeContact, Id: "src9", Etag: "C"},
+			}},
+			Names: []*people.Name{{
+				GivenName: "Ada", FamilyName: "Lovelace", MiddleName: "King",
+				DisplayName: "Ada Lovelace", Metadata: primary,
+			}},
+			Organizations: []*people.Organization{
+				{Name: "Acme", Department: "R&D", Metadata: primary},
+				{Name: "Old Corp", Title: "Intern"},
+			},
+			Biographies:    []*people.Biography{{Value: "note", ContentType: "TEXT_PLAIN"}},
+			EmailAddresses: []*people.EmailAddress{{Value: "ada@example.com", Type: "work", Metadata: primary}},
+			PhoneNumbers:   []*people.PhoneNumber{{Value: "+33612345678", Type: "mobile", CanonicalForm: "+33612345678"}},
+			Urls:           []*people.Url{{Value: "https://www.linkedin.com/in/ada", Type: WebsiteTypeLinkedIn}},
+			Addresses:      []*people.Address{{FormattedValue: "1 Main St", PoBox: "PO 9", CountryCode: "GB"}},
+			Birthdays:      []*people.Birthday{{Text: "1815-12-10"}},
+			Memberships: []*people.Membership{
+				{ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: "contactGroups/myContacts"}},
+				{ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: "contactGroups/abc"}},
+			},
+		}
+	}
+	merged, changed := Enrich(FromPerson(rich()), Contact{
+		JobTitle: "Engineer",
+		Phones:   []Typed{{Value: "+33 6 12 34 56 78"}, {Value: "+44 20 0000 0000", Type: "work"}},
+	})
+	if want := []string{FieldOrganizations, FieldPhoneNumbers}; !reflect.DeepEqual(changed, want) {
+		t.Fatalf("changed = %v, want %v", changed, want)
+	}
+	got := merged.ToPerson()
+
+	want := rich()
+	want.Organizations[0].Title = "Engineer"
+	want.PhoneNumbers = append(want.PhoneNumbers, &people.PhoneNumber{Value: "+44 20 0000 0000", Type: "work"})
+	want.Metadata = &people.PersonMetadata{Sources: []*people.Source{{Type: sourceTypeContact, Id: "src9", Etag: "C"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("data lost:\n got %#v\nwant %#v", got, want)
+	}
+	if merged.Etag != "C" {
+		t.Fatalf("Etag = %q, want C", merged.Etag)
 	}
 }
 
