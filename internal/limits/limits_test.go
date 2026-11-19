@@ -133,6 +133,39 @@ func TestAllow_RetryAfterPositive(t *testing.T) {
 	}
 }
 
+func TestAllow_ConcurrentRejectionsLeaveNoDebt(t *testing.T) {
+	clock := newFakeClock()
+	// 6 writes/min: one token every 10 s, burst 1.
+	l := newTestLimiter(60, 6, clock)
+	const tokenInterval = 10 * time.Second
+	const goroutines = 64
+	const callsPerGoroutine = 50
+
+	if ok, _ := l.Allow("u", true); !ok {
+		t.Fatal("first write rejected")
+	}
+
+	var allowed atomic.Int32
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for range callsPerGoroutine {
+				if ok, _ := l.Allow("u", true); ok {
+					allowed.Add(1)
+				}
+			}
+		})
+	}
+	wg.Wait()
+
+	if got := allowed.Load(); got != 0 {
+		t.Fatalf("%d writes allowed on an exhausted bucket", got)
+	}
+	if ok, retry := l.Allow("u", true); ok || retry != tokenInterval {
+		t.Fatalf("after concurrent rejections: ok=%v retry=%v, want false %v", ok, retry, tokenInterval)
+	}
+}
+
 func TestWriteLock_Serializes(t *testing.T) {
 	l := New(60, 60)
 	const goroutines = 2

@@ -40,8 +40,12 @@ type Limiter struct {
 }
 
 type entry struct {
-	reads  *rate.Limiter
-	writes *rate.Limiter
+	// bucketMu makes each reserve-then-cancel pair atomic. rate.Limiter's
+	// CancelAt only restores a token when no later reservation exists, so two
+	// interleaved rejections would leave the bucket in debt.
+	bucketMu sync.Mutex
+	reads    *rate.Limiter
+	writes   *rate.Limiter
 	// writeMu serializes the user's writes so concurrent edits of the same
 	// contact do not race on etags.
 	writeMu sync.Mutex
@@ -96,10 +100,8 @@ func (l *Limiter) entryLocked(userID string, now time.Time) *entry {
 // Allow takes one token from the user's read or write bucket. When the bucket
 // is empty it consumes nothing and returns the delay until the next token.
 func (l *Limiter) Allow(userID string, write bool) (ok bool, retryAfter time.Duration) {
-	now := l.now()
-
 	l.mu.Lock()
-	e := l.entryLocked(userID, now)
+	e := l.entryLocked(userID, l.now())
 	l.mu.Unlock()
 
 	bucket := e.reads
@@ -107,6 +109,10 @@ func (l *Limiter) Allow(userID string, write bool) (ok bool, retryAfter time.Dur
 		bucket = e.writes
 	}
 
+	e.bucketMu.Lock()
+	defer e.bucketMu.Unlock()
+	// now is read inside the critical section so reservations stay in time order.
+	now := l.now()
 	// A reservation always succeeds for n=1 because burst >= 1; it reports the
 	// wait, and cancelling it returns the token so rejections stay free.
 	r := bucket.ReserveN(now, 1)
