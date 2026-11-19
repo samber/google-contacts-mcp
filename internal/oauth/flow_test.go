@@ -582,7 +582,7 @@ func TestFlow_RefreshRotationAndReuse(t *testing.T) {
 	if _, err := e.verify(e.srv, tr2.AccessToken); err != nil {
 		t.Fatalf("rotated access token rejected: %v", err)
 	}
-	if _, err := e.verify(e.srv, tr1.AccessToken); err == nil {
+	if _, err := e.verify(e.srv, tr1.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Error("access token of the rotated refresh token still valid")
 	}
 
@@ -593,7 +593,7 @@ func TestFlow_RefreshRotationAndReuse(t *testing.T) {
 	if code, tr := e.refresh(tr2.RefreshToken); code == http.StatusOK {
 		t.Errorf("new refresh token survived reuse: %+v", tr)
 	}
-	if _, err := e.verify(e.srv, tr2.AccessToken); err == nil {
+	if _, err := e.verify(e.srv, tr2.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Error("new access token survived reuse")
 	}
 }
@@ -828,7 +828,7 @@ func TestRevoke_KeepsGoogleToken(t *testing.T) {
 	if code, _ := e.refresh(tr.RefreshToken); code == http.StatusOK {
 		t.Error("revoked refresh token still works")
 	}
-	if _, err := e.verify(e.srv, tr.AccessToken); err == nil {
+	if _, err := e.verify(e.srv, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Error("access token of a revoked grant still valid")
 	}
 	if n := e.google.revokeHits.Load(); n != 0 {
@@ -863,4 +863,71 @@ func TestVerifier_WrongAudience(t *testing.T) {
 	if _, err := e.verify(e.srv, tr.RefreshToken); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Errorf("refresh token as bearer: err = %v, want ErrInvalidToken", err)
 	}
+}
+
+func TestVerifier_StoreFailureIsNotInvalidToken(t *testing.T) {
+	e := newEnv(t)
+	tr := e.exchange(newPKCE())
+	if err := e.st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, err := e.verify(e.srv, tr.AccessToken)
+	if err == nil || errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("err = %v, want a non-invalid-token error", err)
+	}
+	if strings.Contains(err.Error(), tr.AccessToken) || strings.Contains(err.Error(), "sql") {
+		t.Errorf("error leaks details to the client: %v", err)
+	}
+}
+
+func TestVerifier_ExpiredAccessToken(t *testing.T) {
+	e := newEnv(t)
+	// A negative lifespan issues access tokens that expired an hour ago.
+	e.srv.fositeConfig.AccessTokenLifespan = -time.Hour
+	tr := e.exchange(newPKCE())
+	if _, err := e.verify(e.srv, tr.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("expired token: err = %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestFlow_DomainAllowedByHD(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.AllowedDomains = []string{"corp.example"} })
+	e.google.set(func(f *fakeGoogle) {
+		f.hd = "Corp.Example"
+		f.email = "alice@corp.example"
+	})
+	cp := e.authorize(authorizeParams(newPKCE()))
+	if rec := e.callback(e.approve(cp), cp.cookie); rec.Code != http.StatusSeeOther {
+		t.Errorf("hd match refused: %d %s", rec.Code, rec.Body)
+	}
+
+	// An hd outside the list is refused even when the e-mail domain matches.
+	e.google.set(func(f *fakeGoogle) { f.hd = "other.example" })
+	cp = e.authorize(authorizeParams(newPKCE()))
+	errorPage(t, e.callback(e.approve(cp), cp.cookie), http.StatusForbidden, "other.example", "not allowed")
+}
+
+func TestFlow_DomainEmailOnlyRefusedForNonGoogleDomain(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.AllowedDomains = []string{"corp.example"} })
+	// A consumer account registered on a corporate address carries no hd.
+	e.google.set(func(f *fakeGoogle) { f.email = "alice@corp.example" })
+	cp := e.authorize(authorizeParams(newPKCE()))
+	errorPage(t, e.callback(e.approve(cp), cp.cookie), http.StatusForbidden, "corp.example", "not allowed")
+	if _, err := e.st.UserBySubOrEmail(context.Background(), "google-sub-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("refused user stored: %v", err)
+	}
+}
+
+func TestFlow_DomainGmailAllowed(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.AllowedDomains = []string{"gmail.com"} })
+	e.google.set(func(f *fakeGoogle) { f.email = "Alice@Gmail.com" })
+	cp := e.authorize(authorizeParams(newPKCE()))
+	if rec := e.callback(e.approve(cp), cp.cookie); rec.Code != http.StatusSeeOther {
+		t.Errorf("gmail.com refused: %d %s", rec.Code, rec.Body)
+	}
+
+	// A Google consumer domain still has to be listed.
+	e.google.set(func(f *fakeGoogle) { f.email = "alice@googlemail.com" })
+	cp = e.authorize(authorizeParams(newPKCE()))
+	errorPage(t, e.callback(e.approve(cp), cp.cookie), http.StatusForbidden, "googlemail.com", "not allowed")
 }

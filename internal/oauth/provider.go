@@ -82,14 +82,16 @@ type Deps struct {
 // Server is this server's OAuth 2.1 authorization server toward MCP clients,
 // logging users in through Google.
 type Server struct {
-	provider  fosite.OAuth2Provider
-	st        *store.Store
-	clients   *ClientResolver
-	up        *google.Upstream
-	idTokens  *oidc.IDTokenVerifier
-	log       *slog.Logger
-	now       func() time.Time
-	templates *template.Template
+	provider fosite.OAuth2Provider
+	// fositeConfig is read by fosite on every request; tests shorten lifespans through it.
+	fositeConfig *fosite.Config
+	st           *store.Store
+	clients      *ClientResolver
+	up           *google.Upstream
+	idTokens     *oidc.IDTokenVerifier
+	log          *slog.Logger
+	now          func() time.Time
+	templates    *template.Template
 
 	issuer         string
 	resource       string
@@ -157,6 +159,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		TokenURL:              issuer + pathToken,
 		AccessTokenIssuer:     issuer,
 	}
+	s.fositeConfig = fcfg
 	storage := &fositeStorage{Store: deps.Store, clients: deps.Clients, audience: s.resource}
 	s.provider = compose.Compose(fcfg, storage, compose.NewOAuth2HMACStrategy(fcfg),
 		compose.OAuth2AuthorizeExplicitFactory,
@@ -193,10 +196,14 @@ func (s *Server) Verifier() auth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		use, ar, err := s.provider.IntrospectToken(ctx, token, fosite.AccessToken, new(fosite.DefaultSession))
 		if err != nil {
-			if errors.Is(err, fosite.ErrServerError) {
-				return nil, fmt.Errorf("oauth: introspect token: %w", err)
+			if isInvalidTokenError(err) {
+				return nil, fmt.Errorf("%w: token is unknown, expired or revoked", auth.ErrInvalidToken)
 			}
-			return nil, fmt.Errorf("%w: token is unknown, expired or revoked", auth.ErrInvalidToken)
+			// fosite wraps storage failures in request_unauthorized too; only the
+			// cause tells them apart. A 401 here would make every client re-run
+			// OAuth during a database hiccup.
+			s.log.ErrorContext(ctx, "oauth: introspect access token", slog.Any("error", fosite.ErrorToRFC6749Error(err).Cause()))
+			return nil, errVerifierUnavailable
 		}
 		if use != fosite.AccessToken {
 			return nil, fmt.Errorf("%w: not an access token", auth.ErrInvalidToken)
@@ -219,6 +226,29 @@ func (s *Server) Verifier() auth.TokenVerifier {
 			Extra:      map[string]any{uidKey: uid},
 		}, nil
 	}
+}
+
+// errVerifierUnavailable is sent to the client (go-sdk writes it into a
+// 500 body) instead of the storage error, which can name internals.
+var errVerifierUnavailable = errors.New("oauth: token verification is temporarily unavailable")
+
+// invalidTokenCauses are the fosite errors meaning the token itself is bad:
+// unknown signature, revoked or rotated, expired, or malformed.
+var invalidTokenCauses = []error{
+	fosite.ErrNotFound,
+	fosite.ErrInactiveToken,
+	fosite.ErrTokenExpired,
+	fosite.ErrTokenSignatureMismatch,
+	fosite.ErrInvalidTokenFormat,
+}
+
+func isInvalidTokenError(err error) bool {
+	for _, cause := range invalidTokenCauses {
+		if errors.Is(err, cause) {
+			return true
+		}
+	}
+	return false
 }
 
 // UserID returns our internal user id from the token info that

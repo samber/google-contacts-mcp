@@ -89,6 +89,11 @@ var authorizeParamNames = []string{
 	paramCodeChallenge, paramCodeChallengeMethod, paramResource, paramResponseMode,
 }
 
+// googleConsumerDomains are the e-mail domains of Google consumer accounts.
+// Google issues every address on them, so it is authoritative for them even
+// without an hd claim.
+var googleConsumerDomains = []string{"gmail.com", "googlemail.com"}
+
 // pkceChallengeRe is the RFC 7636 unreserved character set.
 var pkceChallengeRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 
@@ -450,24 +455,23 @@ func grantedContacts(tok *oauth2.Token) bool {
 	return slices.Contains(strings.Fields(scope), google.ScopeContacts)
 }
 
-// domainAllowed checks --allowed-domains against the hd claim and the e-mail
-// domain. It returns the domain to name in a refusal.
+// domainAllowed checks --allowed-domains (ruling 22). The hd claim is the
+// only proof of a Workspace domain: anyone can create a consumer Google
+// account on any e-mail address, so a bare e-mail domain counts only for
+// domains Google itself issues addresses on. It returns the domain to name
+// in a refusal.
 func (s *Server) domainAllowed(c idClaims) (string, bool) {
 	emailDomain := ""
 	if at := strings.LastIndex(c.Email, "@"); at >= 0 {
 		emailDomain = strings.ToLower(c.Email[at+1:])
 	}
-	hd := strings.ToLower(c.HD)
+	if hd := strings.ToLower(c.HD); hd != "" {
+		return hd, len(s.allowedDomains) == 0 || slices.Contains(s.allowedDomains, hd)
+	}
 	if len(s.allowedDomains) == 0 {
 		return emailDomain, true
 	}
-	if (hd != "" && slices.Contains(s.allowedDomains, hd)) || slices.Contains(s.allowedDomains, emailDomain) {
-		return emailDomain, true
-	}
-	if hd != "" {
-		return hd, false
-	}
-	return emailDomain, false
+	return emailDomain, slices.Contains(googleConsumerDomains, emailDomain) && slices.Contains(s.allowedDomains, emailDomain)
 }
 
 // safeRedirect accepts only https, or http on a loopback host, without
