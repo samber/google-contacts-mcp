@@ -9,7 +9,31 @@ permissions:
   packages: write # push the image to ghcr.io
 
 jobs:
+  # The same gates as CI, so a tag pushed from an untested commit never ships.
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.1
+      - name: go test
+        # -race needs cgo.
+        run: CGO_ENABLED=1 go test -race ./...
+
   goreleaser:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
