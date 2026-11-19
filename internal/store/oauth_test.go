@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -566,5 +567,80 @@ func TestOpen_SecondStoreCanWrite(t *testing.T) {
 	}
 	if _, err := s1.UserBySubOrEmail(ctx, "sub-1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("first store still sees user: %v", err)
+	}
+}
+
+func TestInvalidateAuthorizeCode_Twice_SecondFails(t *testing.T) {
+	ctx := context.Background()
+	s, u := setupOAuth(t)
+	if err := s.CreateAuthorizeCodeSession(ctx, "code-sig", newRequest("req-1", u.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InvalidateAuthorizeCodeSession(ctx, "code-sig"); err != nil {
+		t.Fatalf("first invalidate: %v", err)
+	}
+	if err := s.InvalidateAuthorizeCodeSession(ctx, "code-sig"); !errors.Is(err, fosite.ErrInvalidatedAuthorizeCode) {
+		t.Errorf("second invalidate err = %v, want ErrInvalidatedAuthorizeCode", err)
+	}
+}
+
+func TestRotateRefreshToken_Twice_SecondFails(t *testing.T) {
+	ctx := context.Background()
+	s, u := setupOAuth(t)
+	req := newRequest("req-1", u.ID)
+	if err := s.CreateAccessTokenSession(ctx, "at-1", req); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRefreshTokenSession(ctx, "rt-1", "at-1", req); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RotateRefreshToken(ctx, "req-1", "rt-1"); err != nil {
+		t.Fatalf("first rotate: %v", err)
+	}
+	// A new pair exists, so only the signature guard can reject the replay.
+	if err := s.CreateRefreshTokenSession(ctx, "rt-2", "at-2", req); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RotateRefreshToken(ctx, "req-1", "rt-1"); !errors.Is(err, fosite.ErrSerializationFailure) {
+		t.Errorf("second rotate err = %v, want ErrSerializationFailure", err)
+	}
+	if _, err := s.GetRefreshTokenSession(ctx, "rt-2", nil); err != nil {
+		t.Errorf("failed rotate touched the new refresh token: %v", err)
+	}
+	if err := s.RotateRefreshToken(ctx, "req-1", "unknown"); !errors.Is(err, fosite.ErrSerializationFailure) {
+		t.Errorf("unknown signature err = %v, want ErrSerializationFailure", err)
+	}
+}
+
+func TestRotateRefreshToken_ConcurrentExactlyOneWins(t *testing.T) {
+	// concurrentRotations is enough goroutines to make an unguarded race likely.
+	const concurrentRotations = 16
+	ctx := context.Background()
+	s, u := setupOAuth(t)
+	req := newRequest("req-1", u.ID)
+	if err := s.CreateRefreshTokenSession(ctx, "rt-1", "at-1", req); err != nil {
+		t.Fatal(err)
+	}
+	errs := make([]error, concurrentRotations)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = s.RotateRefreshToken(ctx, "req-1", "rt-1")
+		}()
+	}
+	wg.Wait()
+	wins := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			wins++
+		case !errors.Is(err, fosite.ErrSerializationFailure):
+			t.Errorf("unexpected err: %v", err)
+		}
+	}
+	if wins != 1 {
+		t.Errorf("successful rotations = %d, want 1", wins)
 	}
 }

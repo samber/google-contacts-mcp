@@ -346,8 +346,17 @@ func (s *Store) deleteToken(ctx context.Context, kind, signature string) error {
 
 // deactivate marks inactive every row of the given kinds issued for requestID.
 func (s *Store) deactivate(ctx context.Context, requestID string, kinds ...string) error {
+	return deactivate(ctx, s.db, requestID, kinds...)
+}
+
+// execer is satisfied by *sql.DB and *sql.Tx.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func deactivate(ctx context.Context, db execer, requestID string, kinds ...string) error {
 	for _, kind := range kinds {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := db.ExecContext(ctx,
 			`UPDATE oauth_tokens SET active = 0 WHERE request_id = ? AND kind = ?`, requestID, kind); err != nil {
 			return fmt.Errorf("store: revoke %s tokens: %w", kind, err)
 		}
@@ -375,9 +384,12 @@ func (s *Store) GetAuthorizeCodeSession(ctx context.Context, signature string, s
 }
 
 // InvalidateAuthorizeCodeSession implements oauth2.AuthorizeCodeStorage.
+// Only an active code is flipped, so of two concurrent exchanges of one code
+// exactly one succeeds; the other gets fosite.ErrInvalidatedAuthorizeCode,
+// which fosite turns into a rejected token request before storing any token.
 func (s *Store) InvalidateAuthorizeCodeSession(ctx context.Context, signature string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE oauth_tokens SET active = 0 WHERE kind = ? AND signature = ?`, kindCode, signature)
+		`UPDATE oauth_tokens SET active = 0 WHERE kind = ? AND signature = ? AND active = 1`, kindCode, signature)
 	if err != nil {
 		return fmt.Errorf("store: invalidate code: %w", err)
 	}
@@ -385,10 +397,18 @@ func (s *Store) InvalidateAuthorizeCodeSession(ctx context.Context, signature st
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if n > 0 {
+		return nil
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM oauth_tokens WHERE kind = ? AND signature = ?`, kindCode, signature).Scan(&exists); err != nil {
+		return fmt.Errorf("store: invalidate code: %w", err)
+	}
+	if exists == 0 {
 		return fosite.ErrNotFound
 	}
-	return nil
+	return fosite.ErrInvalidatedAuthorizeCode
 }
 
 // CreateAccessTokenSession implements oauth2.AccessTokenStorage.
@@ -439,8 +459,40 @@ func (s *Store) DeleteRefreshTokenSession(ctx context.Context, signature string)
 // RotateRefreshToken implements oauth2.RefreshTokenStorage with no grace
 // period: the used refresh token and every token of its family are revoked
 // at once, and fosite then stores the new pair under the same request id.
-func (s *Store) RotateRefreshToken(ctx context.Context, requestID, _ string) error {
-	return s.deactivate(ctx, requestID, kindRefresh, kindAccess)
+// The used token is claimed first with an active = 1 guard, in the same
+// transaction, so of two concurrent refreshes with one token exactly one
+// rotates; the other gets fosite.ErrSerializationFailure, which fosite
+// reports as concurrent use of the same token.
+func (s *Store) RotateRefreshToken(ctx context.Context, requestID, signature string) (err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: rotate refresh token: begin: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE oauth_tokens SET active = 0 WHERE kind = ? AND signature = ? AND request_id = ? AND active = 1`,
+		kindRefresh, signature, requestID)
+	if err != nil {
+		return fmt.Errorf("store: rotate refresh token: %w", err)
+	}
+	n, err := rowsAffected(res, "rotate refresh token")
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fosite.ErrSerializationFailure
+	}
+	if err := deactivate(ctx, tx, requestID, kindRefresh, kindAccess); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: rotate refresh token: commit: %w", err)
+	}
+	return nil
 }
 
 // RevokeRefreshToken implements oauth2.TokenRevocationStorage: every refresh
