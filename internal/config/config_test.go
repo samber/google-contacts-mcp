@@ -1,0 +1,311 @@
+package config
+
+import (
+	"log/slog"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// requiredArgs holds the minimum flags Load accepts; tests append to it.
+var requiredArgs = []string{
+	"--base-url=https://contacts.example.com",
+	"--google-client-id=client-id",
+	"--operator-name=Jane Doe",
+	"--operator-email=jane@example.com",
+}
+
+// requiredEnv holds the env-only secrets Load requires.
+var requiredEnv = map[string]string{
+	"GCMCP_GOOGLE_CLIENT_SECRET": "client-secret",
+	"GCMCP_ENCRYPTION_KEYS":      "k1:AAAA",
+}
+
+func envFunc(extra map[string]string) func(string) string {
+	env := map[string]string{}
+	for k, v := range requiredEnv {
+		env[k] = v
+	}
+	for k, v := range extra {
+		env[k] = v
+	}
+	return func(key string) string { return env[key] }
+}
+
+func withArgs(extra ...string) []string {
+	return append(append([]string{}, requiredArgs...), extra...)
+}
+
+func TestLoad_Defaults(t *testing.T) {
+	cfg, err := Load(withArgs(), envFunc(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != "127.0.0.1:8080" {
+		t.Errorf("Listen = %q", cfg.Listen)
+	}
+	if cfg.DBPath != "./data/google-contacts-mcp.db" {
+		t.Errorf("DBPath = %q", cfg.DBPath)
+	}
+	if !cfg.EnableDCR {
+		t.Error("EnableDCR = false, want true")
+	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("LogLevel = %v", cfg.LogLevel)
+	}
+	if cfg.Metrics {
+		t.Error("Metrics = true, want false")
+	}
+	if cfg.MetricsPath != "/metrics" {
+		t.Errorf("MetricsPath = %q", cfg.MetricsPath)
+	}
+	if cfg.RateLimitReads != 120 {
+		t.Errorf("RateLimitReads = %d", cfg.RateLimitReads)
+	}
+	if cfg.RateLimitWrites != 30 {
+		t.Errorf("RateLimitWrites = %d", cfg.RateLimitWrites)
+	}
+	if len(cfg.AllowedDomains) != 0 {
+		t.Errorf("AllowedDomains = %v, want empty", cfg.AllowedDomains)
+	}
+	if cfg.BaseURL == nil || cfg.BaseURL.String() != "https://contacts.example.com" {
+		t.Errorf("BaseURL = %v", cfg.BaseURL)
+	}
+	if cfg.GoogleClientSecret != "client-secret" || cfg.EncryptionKeys != "k1:AAAA" {
+		t.Errorf("secrets not read from env: %q %q", cfg.GoogleClientSecret, cfg.EncryptionKeys)
+	}
+	if cfg.OperatorName != "Jane Doe" || cfg.OperatorEmail != "jane@example.com" {
+		t.Errorf("operator = %q %q", cfg.OperatorName, cfg.OperatorEmail)
+	}
+}
+
+func TestLoad_PortEnv(t *testing.T) {
+	cfg, err := Load(withArgs(), envFunc(map[string]string{"PORT": "9000"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != "0.0.0.0:9000" {
+		t.Errorf("Listen = %q, want 0.0.0.0:9000", cfg.Listen)
+	}
+
+	cfg, err = Load(withArgs("--listen=127.0.0.1:7000"), envFunc(map[string]string{"PORT": "9000"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != "127.0.0.1:7000" {
+		t.Errorf("Listen = %q, want flag value", cfg.Listen)
+	}
+
+	cfg, err = Load(withArgs(), envFunc(map[string]string{"PORT": "9000", "GCMCP_LISTEN": "127.0.0.1:6000"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != "127.0.0.1:6000" {
+		t.Errorf("Listen = %q, want GCMCP_LISTEN value", cfg.Listen)
+	}
+}
+
+func TestLoad_EnvAndFlagPrecedence(t *testing.T) {
+	cfg, err := Load(withArgs("--db-path=/b"), envFunc(map[string]string{"GCMCP_DB_PATH": "/a"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DBPath != "/b" {
+		t.Errorf("DBPath = %q, want /b", cfg.DBPath)
+	}
+
+	cfg, err = Load(withArgs(), envFunc(map[string]string{
+		"GCMCP_DB_PATH":           "/a",
+		"GCMCP_ENABLE_DCR":        "false",
+		"GCMCP_RATE_LIMIT_READS":  "10",
+		"GCMCP_LOG_LEVEL":         "debug",
+		"GCMCP_METRICS_PATH":      "/m",
+		"GCMCP_RATE_LIMIT_WRITES": "5",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DBPath != "/a" || cfg.EnableDCR || cfg.RateLimitReads != 10 || cfg.RateLimitWrites != 5 ||
+		cfg.LogLevel != slog.LevelDebug || cfg.MetricsPath != "/m" {
+		t.Errorf("env not applied: %+v", cfg)
+	}
+
+	if _, err := Load(withArgs(), envFunc(map[string]string{"GCMCP_RATE_LIMIT_READS": "abc"})); err == nil ||
+		!strings.Contains(err.Error(), "GCMCP_RATE_LIMIT_READS") {
+		t.Errorf("bad int env: err = %v, want error naming GCMCP_RATE_LIMIT_READS", err)
+	}
+	if _, err := Load(withArgs(), envFunc(map[string]string{"GCMCP_ENABLE_DCR": "maybe"})); err == nil ||
+		!strings.Contains(err.Error(), "GCMCP_ENABLE_DCR") {
+		t.Errorf("bad bool env: err = %v, want error naming GCMCP_ENABLE_DCR", err)
+	}
+}
+
+func TestLoad_SecretsEnvOnly(t *testing.T) {
+	for _, flag := range []string{"--google-client-secret=x", "--encryption-keys=x"} {
+		if _, err := Load(withArgs(flag), envFunc(nil)); err == nil {
+			t.Errorf("%s: err = nil, want unknown-flag error", flag)
+		}
+	}
+}
+
+func TestLoad_Required(t *testing.T) {
+	flagCases := map[string]string{
+		"base-url":         "--base-url",
+		"google-client-id": "--google-client-id",
+		"operator-name":    "--operator-name",
+		"operator-email":   "--operator-email",
+	}
+	for name, prefix := range flagCases {
+		t.Run(name, func(t *testing.T) {
+			var args []string
+			for _, a := range requiredArgs {
+				if !strings.HasPrefix(a, prefix+"=") {
+					args = append(args, a)
+				}
+			}
+			_, err := Load(args, envFunc(nil))
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("err = %v, want error naming %s", err, name)
+			}
+		})
+	}
+	for _, key := range []string{"GCMCP_GOOGLE_CLIENT_SECRET", "GCMCP_ENCRYPTION_KEYS"} {
+		t.Run(key, func(t *testing.T) {
+			_, err := Load(withArgs(), envFunc(map[string]string{key: ""}))
+			if err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("err = %v, want error naming %s", err, key)
+			}
+		})
+	}
+}
+
+func TestLoad_BaseURLMustBeHTTPS(t *testing.T) {
+	cases := map[string]bool{
+		"http://x":                  false,
+		"http://example.com":        false,
+		"ftp://example.com":         false,
+		"https://":                  false,
+		"not a url":                 false,
+		"https://example.com":       true,
+		"https://example.com/mcp/":  true,
+		"http://localhost":          true,
+		"http://localhost:8080":     true,
+		"http://127.0.0.1":          true,
+		"http://127.0.0.1:8080":     true,
+		"http://localhost.evil.com": false,
+	}
+	for raw, ok := range cases {
+		t.Run(raw, func(t *testing.T) {
+			args := []string{
+				"--base-url=" + raw,
+				"--google-client-id=client-id",
+				"--operator-name=Jane Doe",
+				"--operator-email=jane@example.com",
+			}
+			_, err := Load(args, envFunc(nil))
+			if ok && err != nil {
+				t.Errorf("err = %v, want nil", err)
+			}
+			if !ok && err == nil {
+				t.Error("err = nil, want error")
+			}
+		})
+	}
+}
+
+func TestLoad_Metrics(t *testing.T) {
+	const pw15 = "123456789012345"
+	const pw16 = "1234567890123456"
+
+	if _, err := Load(withArgs("--metrics", "--metrics-password="+pw16), envFunc(nil)); err == nil ||
+		!strings.Contains(err.Error(), "metrics-user") {
+		t.Errorf("missing user: err = %v", err)
+	}
+	if _, err := Load(withArgs("--metrics", "--metrics-user=u"), envFunc(nil)); err == nil ||
+		!strings.Contains(err.Error(), "metrics-password") {
+		t.Errorf("missing password: err = %v", err)
+	}
+	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw15), envFunc(nil)); err == nil {
+		t.Error("15-char password: err = nil, want error")
+	}
+	cfg, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16), envFunc(nil))
+	if err != nil {
+		t.Fatalf("16-char password: %v", err)
+	}
+	if !cfg.Metrics || cfg.MetricsUser != "u" || cfg.MetricsPassword != pw16 {
+		t.Errorf("cfg = %+v", cfg)
+	}
+
+	cfg, err = Load(withArgs("--metrics", "--metrics-user=u"), envFunc(map[string]string{"GCMCP_METRICS_PASSWORD": pw16}))
+	if err != nil {
+		t.Fatalf("env password: %v", err)
+	}
+	if cfg.MetricsPassword != pw16 {
+		t.Errorf("MetricsPassword = %q", cfg.MetricsPassword)
+	}
+
+	path := filepath.Join(t.TempDir(), "pw")
+	if err := os.WriteFile(path, []byte("  "+pw16+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+path), envFunc(nil))
+	if err != nil {
+		t.Fatalf("password file: %v", err)
+	}
+	if cfg.MetricsPassword != pw16 {
+		t.Errorf("MetricsPassword = %q, want trimmed file content", cfg.MetricsPassword)
+	}
+
+	shortPath := filepath.Join(t.TempDir(), "short")
+	if err := os.WriteFile(shortPath, []byte(pw15+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+shortPath), envFunc(nil)); err == nil {
+		t.Error("15-char password file: err = nil, want error")
+	}
+
+	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password-file="+filepath.Join(t.TempDir(), "missing")), envFunc(nil)); err == nil {
+		t.Error("missing password file: err = nil, want error")
+	}
+
+	if _, err := Load(withArgs("--metrics", "--metrics-user=u", "--metrics-password="+pw16, "--metrics-password-file="+path), envFunc(nil)); err == nil {
+		t.Error("password and password file: err = nil, want error")
+	}
+}
+
+func TestLoad_AllowedDomains(t *testing.T) {
+	cfg, err := Load(withArgs("--allowed-domains= Acme.com, gmail.com "), envFunc(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"acme.com", "gmail.com"}
+	if !reflect.DeepEqual(cfg.AllowedDomains, want) {
+		t.Errorf("AllowedDomains = %v, want %v", cfg.AllowedDomains, want)
+	}
+
+	cfg, err = Load(withArgs("--allowed-domains=,"), envFunc(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.AllowedDomains) != 0 {
+		t.Errorf("AllowedDomains = %v, want empty", cfg.AllowedDomains)
+	}
+}
+
+func TestLoad_InvalidValues(t *testing.T) {
+	cases := map[string][]string{
+		"log level":          withArgs("--log-level=verbose"),
+		"zero reads":         withArgs("--rate-limit-reads=0"),
+		"negative writes":    withArgs("--rate-limit-writes=-1"),
+		"metrics path slash": withArgs("--metrics-path=metrics"),
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(args, envFunc(nil)); err == nil {
+				t.Error("err = nil, want error")
+			}
+		})
+	}
+}
