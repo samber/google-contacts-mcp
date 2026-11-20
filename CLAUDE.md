@@ -53,7 +53,7 @@ go test -race ./...
 - No magic numbers or strings inline: named constants, each with one-line "why" comment.
 - Never ignore error. Structured `slog` logging.
 - User deletion runs explicit `deleteUserChildren` list (`internal/store/users.go`); add every new per-user table to it.
-- Flags must stay in sync with README configuration table.
+- Flags must stay in sync with the configuration table in `docs/self-hosting.md`.
 - Conventional Commits.
 
 ## References
