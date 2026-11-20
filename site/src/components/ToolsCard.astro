@@ -1,0 +1,70 @@
+---
+import { TOOLS, TOOL_GROUPS } from '../data/site';
+import IndexCard from './IndexCard.astro';
+---
+
+<section class="tools" aria-labelledby="tools-title">
+  <h2 id="tools-title">What your assistant can do</h2>
+  <IndexCard header="Ten tools, all on your Google Contacts">
+    <div class="groups">
+      {
+        TOOL_GROUPS.map(({ group, title }) => (
+          <section class="group">
+            <h3>{title}</h3>
+            <dl>
+              {TOOLS.filter((tool) => tool.group === group).map((tool) => (
+                <div class="entry">
+                  <dt class="typed">{tool.name}</dt>
+                  <dd>{tool.summary}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))
+      }
+    </div>
+  </IndexCard>
+</section>
+
+<style>
+  .tools {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .groups {
+    display: grid;
+    gap: var(--space-5) var(--space-5);
+  }
+
+  @media (min-width: 60rem) {
+    .groups {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  h3 {
+    margin-bottom: var(--space-2);
+    font-size: var(--step-1);
+  }
+
+  dl {
+    margin: 0;
+  }
+
+  /* Each entry sits on its own ruled line, like entries on an index card. */
+  .entry {
+    padding-block: var(--space-2);
+    border-top: 1px solid var(--rule);
+  }
+
+  dt {
+    font-weight: 700;
+    font-size: var(--step--1);
+  }
+
+  dd {
+    margin: 0;
+    max-width: 38ch;
+  }
+</style>

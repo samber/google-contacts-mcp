@@ -1,0 +1,54 @@
+---
+import { NEVER_STORED, STORED } from '../data/site';
+import IndexCard from './IndexCard.astro';
+---
+
+<section class="stored" aria-labelledby="stored-title">
+  <div class="intro">
+    <h2 id="stored-title">What it keeps, and what it never keeps</h2>
+    <p>
+      Your contacts never touch the server's disk. Every call goes to Google directly, and the server keeps only what
+      it needs to keep you signed in.
+    </p>
+    <p><a href="/privacy">Read the privacy policy</a></p>
+  </div>
+  <div class="lists">
+    <IndexCard header="Kept">
+      <ul>{STORED.map((item) => <li>{item}</li>)}</ul>
+    </IndexCard>
+    <IndexCard header="Never kept">
+      <ul>{NEVER_STORED.map((item) => <li>{item}</li>)}</ul>
+    </IndexCard>
+  </div>
+</section>
+
+<style>
+  .stored {
+    display: grid;
+    gap: var(--space-5);
+  }
+
+  .intro {
+    display: grid;
+    gap: var(--space-3);
+    max-width: var(--measure-text);
+  }
+
+  .lists {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  @media (min-width: 50rem) {
+    .lists {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  ul {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding-left: 1.1rem;
+  }
+</style>

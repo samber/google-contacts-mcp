@@ -4,7 +4,11 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-const { SITE_URL, MCP_URL, REPO_URL } = await import('../src/data/site.ts');
+const { SITE_URL, MCP_URL, REPO_URL, TOOLS = [], STORED = [], NEVER_STORED = [] } = await import('../src/data/site.ts');
+
+// Go sources registering the MCP tools; the site's tool list must match them.
+const GO_TOOLS_DIR = fileURLToPath(new URL('../../internal/tools/', import.meta.url));
+const GO_TOOL_NAME = /Name:\s+"([a-z_]+)"/g;
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
 
@@ -116,6 +120,28 @@ if (existsSync(`${DIST}index.html`)) {
     scriptBytes += gzipSync(code).length;
   }
   if (scriptBytes > MAX_SCRIPT_GZIP_BYTES) fail(`index.html: page scripts are ${scriptBytes} B gzipped, limit ${MAX_SCRIPT_GZIP_BYTES} B`);
+}
+
+// Facts shown on the home page must match the code.
+if (TOOLS.length === 0) fail('site.ts: TOOLS is empty');
+if (STORED.length === 0 || NEVER_STORED.length === 0) fail('site.ts: STORED or NEVER_STORED is empty');
+if (existsSync(`${DIST}index.html`)) {
+  const home = read('index.html');
+  for (const { name } of TOOLS) {
+    if (!home.includes(name)) fail(`index.html: tool ${name} is not listed`);
+  }
+  for (const item of [...STORED, ...NEVER_STORED]) {
+    if (!home.includes(item)) fail(`index.html: stored/never-stored item is missing: ${item}`);
+  }
+}
+if (existsSync(GO_TOOLS_DIR)) {
+  const goNames = new Set();
+  for (const name of readdirSync(GO_TOOLS_DIR).filter((n) => n.endsWith('.go') && !n.endsWith('_test.go'))) {
+    for (const [, tool] of readFileSync(`${GO_TOOLS_DIR}${name}`, 'utf8').matchAll(GO_TOOL_NAME)) goNames.add(tool);
+  }
+  const siteNames = new Set(TOOLS.map((t) => t.name));
+  for (const name of goNames) if (!siteNames.has(name)) fail(`site.ts: TOOLS lacks ${name}, registered in internal/tools`);
+  for (const name of siteNames) if (!goNames.has(name)) fail(`site.ts: tool ${name} is not registered in internal/tools`);
 }
 
 // Crawler and assistant discovery files.
