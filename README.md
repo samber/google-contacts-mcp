@@ -6,7 +6,7 @@ Connect Claude or ChatGPT to your Google Contacts. Your assistant can then searc
 
 Your contacts never touch the server's disk. Every tool call reads or writes Google directly, and the server keeps only what it needs to keep you signed in.
 
-A hosted instance runs at `https://google-contacts-mcp.samber.dev` (early access, see its home page to join). You can also run your own: it is a single Go binary with one SQLite file.
+A hosted instance is available at `https://mcp.google-contacts-mcp.samber.dev/mcp` (early access, see the [landing page](https://google-contacts-mcp.samber.dev) to join). You can also run your own: it is a single Go binary with one SQLite file.
 
 ## How it works
 
@@ -219,7 +219,7 @@ This tutorial deploys the server as a Clever Cloud Go application. Clever Cloud 
 
 ### 4. Connect Claude and ChatGPT
 
-The connector URL is your base URL followed by `/mcp`, for example `https://google-contacts-mcp.samber.dev/mcp`.
+The connector URL is your base URL followed by `/mcp`, for example `https://mcp.google-contacts-mcp.samber.dev/mcp`.
 
 **Claude** (claude.ai, Claude Desktop and the mobile apps share connectors):
 
