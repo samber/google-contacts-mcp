@@ -1,0 +1,54 @@
+---
+type Props = {
+  /** Text on the red header rule, like the name a card is filed under. */
+  header?: string;
+  /** Blue ruled lines behind the content; content then uses the 1.9rem line height. */
+  ruled?: boolean;
+  class?: string;
+};
+
+const { header, ruled = false, class: className } = Astro.props;
+---
+
+<div class:list={['card', { ruled }, className]}>
+  {header && <p class="header typed">{header}</p>}
+  <div class="body">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .card {
+    background-color: var(--card);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    overflow: hidden;
+    /* Lets a card stretch to its row while the ruled lines keep filling it. */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .header {
+    padding: 0.55rem var(--space-3);
+    border-bottom: 2px solid var(--red);
+    font-weight: 700;
+    font-size: var(--step-0);
+  }
+
+  .body {
+    flex: 1;
+    padding: var(--space-3);
+  }
+
+  .ruled .body {
+    padding-block: 0 var(--space-3);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(1.9rem - 1px),
+      var(--rule) calc(1.9rem - 1px),
+      var(--rule) 1.9rem
+    );
+    line-height: 1.9rem;
+  }
+</style>

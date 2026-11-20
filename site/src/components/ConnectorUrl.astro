@@ -1,0 +1,100 @@
+---
+import { MCP_URL } from '../data/site';
+---
+
+<section id="connect" class="connect" aria-label="Connector URL">
+  <div class="url-row">
+    <code id="mcp-url" class="typed url">{MCP_URL}</code>
+    <!-- Shown by the script below: without JavaScript the URL is still selectable text. -->
+    <button type="button" class="copy" data-copy-button hidden>Copy URL</button>
+  </div>
+  <p class="status" role="status" aria-live="polite" data-copy-status></p>
+  <ul class="steps">
+    <li>Claude: Settings, Connectors, Add custom connector.</li>
+    <li>ChatGPT: developer mode, Create app.</li>
+  </ul>
+</section>
+
+<script>
+  import { copyText } from '../scripts/copy.ts';
+
+  const COPIED_LABEL_MS = 2000;
+  const button = document.querySelector<HTMLButtonElement>('[data-copy-button]');
+  const status = document.querySelector<HTMLElement>('[data-copy-status]');
+  const url = document.getElementById('mcp-url');
+
+  if (button && status && url) {
+    button.hidden = false;
+    button.addEventListener('click', async () => {
+      const result = await copyText(url.textContent ?? '', navigator.clipboard);
+      if (result === 'copied') {
+        status.textContent = 'Copied';
+        button.dataset.state = 'copied';
+        setTimeout(() => delete button.dataset.state, COPIED_LABEL_MS);
+        return;
+      }
+      // No clipboard access: select the URL so the user can copy it by hand.
+      status.textContent = 'Select the URL to copy it';
+      const range = document.createRange();
+      range.selectNodeContents(url);
+      const selection = getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+  }
+</script>
+
+<style>
+  .url-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: var(--card);
+    border: 2px solid var(--rule);
+    border-radius: var(--card-radius);
+  }
+
+  .url {
+    flex: 1 1 16rem;
+    align-self: center;
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--step-0);
+    user-select: all;
+  }
+
+  .copy {
+    min-height: 2.75rem;
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--card-radius);
+    background: var(--ink);
+    color: var(--card);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .copy[hidden] {
+    display: none;
+  }
+
+  .copy[data-state='copied'] {
+    background: var(--mark);
+    color: var(--on-mark);
+  }
+
+  .status {
+    min-height: 1.6em;
+    margin-top: var(--space-2);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+
+  .steps {
+    padding: 0;
+    list-style: none;
+    font-size: var(--step--1);
+  }
+</style>

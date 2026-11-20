@@ -1,0 +1,81 @@
+---
+import ConnectorUrl from '../components/ConnectorUrl.astro';
+import HeroCard from '../components/HeroCard.astro';
+import OpenSource from '../components/OpenSource.astro';
+import SignatureDemo from '../components/SignatureDemo.astro';
+import StoredCards from '../components/StoredCards.astro';
+import ToolsCard from '../components/ToolsCard.astro';
+import Base from '../layouts/Base.astro';
+import { OPERATOR_NAME, REPO_URL, SITE_URL } from '../data/site';
+
+// Structured data for search engines and assistants. It makes no claim about who can
+// sign up (no "offers" or availability), since access may be limited.
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Google Contacts MCP',
+  description:
+    'A remote MCP server that lets Claude and ChatGPT search, read, create and enrich your Google Contacts, with your consent.',
+  applicationCategory: 'BusinessApplication',
+  operatingSystem: 'Web',
+  url: SITE_URL,
+  isAccessibleForFree: true,
+  author: { '@type': 'Person', name: OPERATOR_NAME },
+  sameAs: [REPO_URL],
+};
+---
+
+<Base
+  title="Google Contacts MCP: let Claude and ChatGPT manage your contacts"
+  description="Connect Claude or ChatGPT to your Google Contacts: search, create and enrich contacts by talking to your assistant."
+  path="/"
+>
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+  <div class="wrap hero">
+    <div class="intro">
+      <h1>Your assistant keeps your address book up to date.</h1>
+      <p class="lede">Claude and ChatGPT search, create and enrich your Google Contacts.</p>
+      <ConnectorUrl />
+    </div>
+    <HeroCard />
+  </div>
+  <div class="wrap sections">
+    <ToolsCard />
+    <SignatureDemo />
+    <StoredCards />
+    <OpenSource />
+  </div>
+</Base>
+
+<style>
+  .hero {
+    display: grid;
+    gap: var(--space-5) var(--space-6);
+    padding-block: var(--space-5) 0;
+    align-items: center;
+  }
+
+  @media (min-width: 60rem) {
+    .hero {
+      grid-template-columns: 1.15fr 1fr;
+      padding-block: var(--space-6) 0;
+    }
+  }
+
+  .sections {
+    display: grid;
+    gap: var(--space-7);
+    padding-top: var(--space-7);
+  }
+
+  .intro {
+    display: grid;
+    gap: var(--space-4);
+    max-width: 38rem;
+  }
+
+  .lede {
+    font-size: var(--step-1);
+    max-width: var(--measure-text);
+  }
+</style>

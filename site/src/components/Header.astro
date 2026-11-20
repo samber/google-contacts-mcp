@@ -1,0 +1,47 @@
+---
+import { REPO_URL } from '../data/site';
+---
+
+<header class="site-header">
+  <div class="wrap bar">
+    <a class="brand" href="/">Google Contacts MCP</a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/#connect">Connect</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/terms">Terms</a></li>
+        <li><a href={REPO_URL}>GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    padding-block: var(--space-3);
+  }
+
+  .brand {
+    font-weight: 800;
+    font-size: var(--step-1);
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+
+  ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    padding: 0;
+    list-style: none;
+  }
+
+  nav a {
+    font-weight: 600;
+  }
+</style>
