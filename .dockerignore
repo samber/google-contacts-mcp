@@ -5,4 +5,5 @@
 data
 dist
 docs
+site
 .env
