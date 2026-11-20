@@ -38,7 +38,7 @@ Run `check`, `test`, `build`, `verify` before every commit that touches `site/`.
 - No analytics, no cookies, no third-party request: the privacy policy says so.
 - Facts on the site must match the code: tools (`internal/tools`), what is stored (README, `internal/store`), retention (`internal/jobs`).
 - Example data is fictional. Never the owner's or a real person's data.
-- Never say the service is open to everyone: Google testing mode limits who can connect.
+- The Google app is out of testing mode: anyone with a Google account can connect, so the copy may say so. If that changes, update `/terms` ("Who can use it").
 - Edit `LEGAL_UPDATED` in `src/data/site.ts` whenever `/privacy` or `/terms` changes.
 - The rate limits in `/terms` (50 reads, 20 writes per user per minute) must equal `GCMCP_RATE_LIMIT_READS` and `GCMCP_RATE_LIMIT_WRITES` on the deployed server; the server defaults are 120 and 30.
 - Build output is `build.format: 'file'`, `trailingSlash: 'never'`: the host must serve `/privacy` from `privacy.html` and `/terms` from `terms.html`. `python3 -m http.server` does not; use the `.html` URLs locally.

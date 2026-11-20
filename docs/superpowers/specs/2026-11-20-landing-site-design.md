@@ -31,7 +31,7 @@ The server moves to its own host. The site takes the old host.
 ## Anti-goals
 
 - A generic SaaS template: gradient hero, identical rounded cards, three feature icons.
-- Saying the service is open to everyone while the Google app is in Testing mode (see the owner's decision below).
+- Availability claims the owner has not confirmed.
 - Any request to a third-party host at page load, such as Google Fonts or a CDN.
 
 ## Constraints
@@ -114,7 +114,7 @@ Left-aligned text on a 12-column grid. A card stack on the right of the hero, th
 `/terms`: the terms of service, same long-document layout as `/privacy`, linked from the header menu, the footer and the privacy policy. Plain-language sections, all drafted from how the service actually behaves:
 
 - who provides the service (the operator, an individual) and what it is;
-- who may use it: a Google account holder, subject to the Google Cloud app's current status (Testing mode or verified) and to the operator's allow-list;
+- who may use it: any Google account holder, unless the operator restricts the e-mail domains;
 - what the user authorizes: the assistant acts on their contacts through the Google People API, and the user stays responsible for what they ask it to do, including bulk edits and deletes;
 - acceptable use, including no abuse of the rate limits (120 reads and 30 writes per user per minute) and compliance with Google's terms and the assistant provider's terms;
 - the service is provided "as is", with no uptime guarantee, no backup guarantee, and a note that contacts changed by an assistant can be lost or overwritten, so users should keep their own export;
@@ -171,7 +171,7 @@ Decided by the owner:
 
 - The public e-mail on the privacy policy, the terms and the footer is `hello@samuel-berthe.fr`.
 - The terms are governed by French law, with no court named.
-- The hero carries no Testing-mode note. Consequence, accepted by the owner: while the Google app is in Testing mode, a visitor who is not a listed test user meets a Google refusal page after copying the URL. To keep the page truthful, its copy never says the service is open to everyone: it says how to add the connector, nothing more.
+- The Google app is out of testing mode (owner, 2026-11-20 update). The hero carries no Testing-mode note, and the terms say anyone with a Google account can connect, unless the operator restricts the e-mail domains.
 
 Still open:
 
