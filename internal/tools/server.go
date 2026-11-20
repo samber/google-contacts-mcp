@@ -104,7 +104,7 @@ func (d Deps) logger() *slog.Logger {
 
 // NewServer builds the MCP server with every contact tool registered.
 func NewServer(deps Deps) *mcp.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: deps.Version}, &mcp.ServerOptions{
+	srv := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: deps.Version, Icons: serverIcons()}, &mcp.ServerOptions{
 		Logger: deps.logger(),
 		SupportedProtocolVersions: []string{
 			protocolVersion20260728,
