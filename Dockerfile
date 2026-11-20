@@ -6,7 +6,7 @@
 #   release     used by goreleaser (--target=release): copies its prebuilt binary.
 #   default     last stage, used by a plain `docker build .`.
 
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
