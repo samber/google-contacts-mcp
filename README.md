@@ -274,7 +274,7 @@ ChatGPT also offers scheduled tasks, but whether they can call custom apps such 
 - **One instance only.** SQLite has a single writer. Run exactly one instance; scale up, not out.
 - **Revoked Google access.** The server learns that a grant was revoked (by the user, or expired in Testing mode) only when it next calls Google for that user. On that call, Google refuses the grant, the server deletes the user's data, and the tool fails with "Google access was revoked; reconnect this connector". The assistant's next request is rejected, and it asks the user to sign in again. Every assistant of that user must reconnect. A user who never comes back is removed by the 180-day purge.
 - **Rate limits.** Each user gets 120 read calls and 30 write calls per minute by default. Over the limit, the tool returns an error such as "rate limited, retry after 12s", and the assistant can wait and retry.
-- **Google outages.** When Google cannot be reached (timeout, refused connection, DNS failure), tools fail with "Google is unreachable, retry later". Nothing was sent, so retrying is safe.
+- **Google outages.** When Google cannot be reached (timeout, refused connection, DNS failure), tools fail with "Google is unreachable, retry later". Retry reads freely. After a timeout a write may have been applied, so re-read before retrying a create or an update.
 - **Sign-in floods.** Client registration, client metadata fetches and sign-in starts happen before anyone authenticates, so each has a server-wide budget (5 registrations and 5 metadata fetches per second, 20 sign-in starts per second, with bursts). Over budget, registration answers HTTP 429 with `Retry-After` and the sign-in page asks to wait a moment. Real use stays far below these numbers.
 
 ## Security notes

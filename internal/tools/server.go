@@ -37,8 +37,9 @@ const (
 	msgUpstreamAuth    = "Google access was revoked; reconnect this connector"
 	msgNoUser          = "internal error: no authenticated user"
 	msgInvalidArgument = "invalid argument"
-	// msgUnreachable covers timeouts, refused connections and DNS failures:
-	// nothing reached Google, so the call is safe to retry.
+	// msgUnreachable covers timeouts, refused connections and DNS failures.
+	// After a timeout or a dropped connection Google may already have applied
+	// a write, so callers must re-read before retrying one.
 	msgUnreachable = "Google is unreachable, retry later"
 	// msgCanceled answers a call the client canceled; it rarely reaches the
 	// client, which stopped waiting.
