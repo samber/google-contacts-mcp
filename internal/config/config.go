@@ -68,8 +68,7 @@ const (
 	flagMetricsPasswordFile = "metrics-password-file"
 	flagRateLimitReads      = "rate-limit-reads"
 	flagRateLimitWrites     = "rate-limit-writes"
-	flagOperatorName        = "operator-name"
-	flagOperatorEmail       = "operator-email"
+	flagSiteURL             = "site-url"
 )
 
 // loopbackHosts may use plain http in --base-url, for local development only.
@@ -103,8 +102,8 @@ type Config struct {
 	MetricsPassword string
 	RateLimitReads  int
 	RateLimitWrites int
-	OperatorName    string
-	OperatorEmail   string
+	// SiteURL is where GET / redirects; nil (nullable) when no website is configured.
+	SiteURL *url.URL
 	// Args holds the positional arguments left after the flags.
 	Args []string
 }
@@ -119,7 +118,7 @@ type raw struct {
 	baseURL, listen, dbPath, googleClientID, allowedDomains, logLevel string
 	metricsPath, metricsListen, metricsUser                           string
 	metricsPassword, metricsPasswordFile                              string
-	operatorName, operatorEmail                                       string
+	siteURL                                                           string
 	enableDCR, metrics                                                bool
 	rateLimitReads, rateLimitWrites                                   int
 }
@@ -185,8 +184,7 @@ func newFlagSet(getenv func(string) string, r *raw) (*flag.FlagSet, error) {
 	str(&r.metricsPasswordFile, flagMetricsPasswordFile, "", "file holding the metrics basic-auth password")
 	integer(&r.rateLimitReads, flagRateLimitReads, defaultRateLimitReads, "per-user reads per minute")
 	integer(&r.rateLimitWrites, flagRateLimitWrites, defaultRateLimitWrites, "per-user writes per minute")
-	str(&r.operatorName, flagOperatorName, "", "operator name shown on / and /privacy (required)")
-	str(&r.operatorEmail, flagOperatorEmail, "", "operator contact e-mail shown on / and /privacy (required)")
+	str(&r.siteURL, flagSiteURL, "", "website URL that GET / redirects to (empty: / answers 404)")
 
 	return fs, errors.Join(errs...)
 }
@@ -220,8 +218,6 @@ const (
 	reqGoogleClientID     = "--" + flagGoogleClientID
 	reqGoogleClientSecret = envGoogleClientSecret
 	reqEncryptionKeys     = envEncryptionKeys
-	reqOperatorName       = "--" + flagOperatorName
-	reqOperatorEmail      = "--" + flagOperatorEmail
 )
 
 // commandSpec lists what each command needs, so offline maintenance commands
@@ -237,7 +233,7 @@ type commandSpec struct {
 var commandSpecs = map[string]commandSpec{
 	CmdServe: {required: []string{
 		reqBaseURL, reqDBPath, reqGoogleClientID, reqGoogleClientSecret,
-		reqEncryptionKeys, reqOperatorName, reqOperatorEmail,
+		reqEncryptionKeys,
 	}},
 	CmdRekey: {required: []string{reqDBPath, reqEncryptionKeys}},
 	CmdDisconnect: {
@@ -281,8 +277,6 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 		MetricsUser:        r.metricsUser,
 		RateLimitReads:     r.rateLimitReads,
 		RateLimitWrites:    r.rateLimitWrites,
-		OperatorName:       strings.TrimSpace(r.operatorName),
-		OperatorEmail:      strings.TrimSpace(r.operatorEmail),
 		Args:               fs.Args(),
 	}
 
@@ -290,12 +284,21 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 	errs = append(errs, validateRequired(spec, &r, cfg)...)
 
 	if r.baseURL != "" {
-		u, err := parseBaseURL(r.baseURL)
+		u, err := parseHTTPSURL(flagBaseURL, r.baseURL)
 		if err != nil {
 			errs = append(errs, err)
 		}
 
 		cfg.BaseURL = u
+	}
+
+	if siteURL := strings.TrimSpace(r.siteURL); siteURL != "" {
+		u, err := parseHTTPSURL(flagSiteURL, siteURL)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		cfg.SiteURL = u
 	}
 
 	level, ok := logLevels[strings.ToLower(r.logLevel)]
@@ -348,8 +351,6 @@ func validateRequired(spec commandSpec, r *raw, cfg Config) []error {
 		reqGoogleClientID:     cfg.GoogleClientID,
 		reqGoogleClientSecret: cfg.GoogleClientSecret,
 		reqEncryptionKeys:     cfg.EncryptionKeys,
-		reqOperatorName:       cfg.OperatorName,
-		reqOperatorEmail:      cfg.OperatorEmail,
 	}
 
 	var errs []error
@@ -378,25 +379,26 @@ func validateRates(cfg Config) []error {
 	return errs
 }
 
-// parseBaseURL requires an absolute https URL, or http on a loopback host.
-func parseBaseURL(raw string) (*url.URL, error) {
+// parseHTTPSURL requires an absolute https URL, or http on a loopback host.
+// flagName names the offending flag in errors.
+func parseHTTPSURL(flagName, raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("--%s: %w", flagBaseURL, err)
+		return nil, fmt.Errorf("--%s: %w", flagName, err)
 	}
 
 	if u.Host == "" {
-		return nil, fmt.Errorf("--%s: %q has no host", flagBaseURL, raw)
+		return nil, fmt.Errorf("--%s: %q has no host", flagName, raw)
 	}
 
 	switch u.Scheme {
 	case schemeHTTPS:
 	case schemeHTTP:
 		if !loopbackHosts[u.Hostname()] {
-			return nil, fmt.Errorf("--%s: %q must use https (http allowed only for localhost and 127.0.0.1)", flagBaseURL, raw)
+			return nil, fmt.Errorf("--%s: %q must use https (http allowed only for localhost and 127.0.0.1)", flagName, raw)
 		}
 	default:
-		return nil, fmt.Errorf("--%s: %q must use https", flagBaseURL, raw)
+		return nil, fmt.Errorf("--%s: %q must use https", flagName, raw)
 	}
 
 	return u, nil

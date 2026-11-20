@@ -61,9 +61,6 @@ const (
 	paramState = "state"
 	paramCode  = "code"
 	paramError = "error"
-	// googleErrAccessDenied is what Google returns when the user is not a test
-	// user of the project, or declined consent.
-	googleErrAccessDenied = "access_denied"
 	// tokenExtraIDToken and tokenExtraScope are fields of Google's token response.
 	tokenExtraIDToken = "id_token"
 	tokenExtraScope   = "scope"
@@ -369,22 +366,11 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	s.provider.WriteAuthorizeResponse(ctx, &issWriter{ResponseWriter: w, iss: s.issuer}, ar, resp)
 }
 
-// renderGoogleError reports an error returned by Google on the callback. An
-// access_denied error gets the early-access page: it is the answer for an
-// account that declined, or that Google refused for this app.
+// renderGoogleError reports an error returned by Google on the callback. Every
+// error, including access_denied, gets the same generic page; only the log
+// line tells them apart.
 func (s *Server) renderGoogleError(w http.ResponseWriter, r *http.Request, gerr string) {
 	s.log.InfoContext(r.Context(), "oauth: google returned an error", slog.String("error", gerr))
-
-	if gerr == googleErrAccessDenied {
-		s.renderError(w, r, &page{
-			status: http.StatusForbidden, Title: "Access not granted",
-			Message: "This server is in early access: e-mail " + s.operatorEmail + " to join. " +
-				"If you declined access on Google's page, start again from your assistant.",
-		})
-
-		return
-	}
-
 	s.renderError(w, r, pageGoogleFailed)
 }
 

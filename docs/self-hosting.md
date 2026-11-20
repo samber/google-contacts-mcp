@@ -15,12 +15,10 @@ export GCMCP_GOOGLE_CLIENT_SECRET="<your Google client secret>"
 
 google-contacts-mcp serve \
   --base-url http://localhost:8080 \
-  --google-client-id "<your Google client id>.apps.googleusercontent.com" \
-  --operator-name "Your Name" \
-  --operator-email "you@example.com"
+  --google-client-id "<your Google client id>.apps.googleusercontent.com"
 ```
 
-The server listens on `127.0.0.1:8080`, stores its database in `./data/google-contacts-mcp.db`, and serves the MCP endpoint at `http://localhost:8080/mcp`. Open `http://localhost:8080/` to check it is running.
+The server listens on `127.0.0.1:8080`, stores its database in `./data/google-contacts-mcp.db`, and serves the MCP endpoint at `http://localhost:8080/mcp`. The server renders no web page. To check it is running, open `http://localhost:8080/.well-known/oauth-authorization-server`, which returns JSON.
 
 Plain `http` is accepted only for `localhost` and `127.0.0.1`. Claude and ChatGPT connect from their own cloud, so they cannot reach a server on your laptop: to try them, expose the server through an HTTPS tunnel and use the tunnel URL as `--base-url`, or deploy it on a server with a public HTTPS address.
 
@@ -33,8 +31,6 @@ docker run --rm -p 8080:8080 \
   -e GCMCP_GOOGLE_CLIENT_ID=... \
   -e GCMCP_GOOGLE_CLIENT_SECRET=... \
   -e GCMCP_ENCRYPTION_KEYS=... \
-  -e GCMCP_OPERATOR_NAME="Your Name" \
-  -e GCMCP_OPERATOR_EMAIL=you@example.com \
   ghcr.io/samber/google-contacts-mcp
 ```
 
@@ -75,8 +71,7 @@ Every flag can also be set with an environment variable: `GCMCP_` followed by th
 | `--metrics-password-file` | `GCMCP_METRICS_PASSWORD_FILE` | none                                                    | File holding the basic-auth password. Safer than passing it on the command line. Cannot be combined with `--metrics-password`.          |
 | `--rate-limit-reads`      | `GCMCP_RATE_LIMIT_READS`      | `120`                                                   | Read tool calls per user per minute.                                                                                                    |
 | `--rate-limit-writes`     | `GCMCP_RATE_LIMIT_WRITES`     | `30`                                                    | Write tool calls per user per minute.                                                                                                   |
-| `--operator-name`         | `GCMCP_OPERATOR_NAME`         | required                                                | Your name, shown on the home page (`/`) and the privacy policy (`/privacy`).                                                            |
-| `--operator-email`        | `GCMCP_OPERATOR_EMAIL`        | required                                                | Contact e-mail shown on `/` and `/privacy`.                                                                                             |
+| `--site-url`              | `GCMCP_SITE_URL`              | none                                                    | Website URL. `GET /` redirects to it with a 302. Without it, `/` answers 404. Must be `https`, or `http` on `localhost`.                |
 
 `rekey` needs only `--db-path` and `GCMCP_ENCRYPTION_KEYS`. `disconnect` also needs the Google client id and secret, to revoke the grant at Google.
 
@@ -96,14 +91,14 @@ You need a Google Cloud project with an OAuth client. This takes about 15 minute
 1. In the [Google Cloud console](https://console.cloud.google.com), create a project, for example `google-contacts-mcp`.
 2. Open **APIs & Services > Library**, search for **Google People API** and enable it.
 3. Open **Google Auth Platform** (formerly the OAuth consent screen) and configure it:
-   - **Branding:** app name, support e-mail, and the links to your server's home page (`https://<host>/`) and privacy policy (`https://<host>/privacy`). Add your domain to the authorized domains.
+   - **Branding:** app name, support e-mail, and the links to your home page and privacy policy. The server serves neither: host them on your own website, on a domain you add to the authorized domains. The `site/` directory holds the Astro site used by the hosted instance, which you can adapt.
    - **Audience:** choose **External**, so any Google account can connect, or **Internal** to limit it to your Workspace organization.
    - **Data access:** add exactly three scopes: `openid`, `.../auth/userinfo.email` (shown as `email`) and `https://www.googleapis.com/auth/contacts`.
 4. Open **Clients**, create an OAuth client of type **Web application**, and add the authorized redirect URI `https://<host>/oauth/google/callback`. Copy the client id and secret into `--google-client-id` and `GCMCP_GOOGLE_CLIENT_SECRET`.
 
 **Testing mode versus a verified app.** A new External app starts in Testing mode. Only the test users you list under **Audience** can connect, at most 100 of them, and Google expires their grant 7 days after consent: each user must reconnect every week. To lift both limits, publish the app and submit it for verification. The contacts scope is sensitive, not restricted, so verification needs no security assessment. Google checks that your home page and privacy policy live on your verified domain; the server serves both pages for you.
 
-Users not on the test list see an error page that invites them to e-mail the operator to join.
+Users not on the test list see Google's own refusal, then a generic "Google sign-in failed" page from this server.
 
 **Restricting accounts.** To accept only your company, either choose the Internal audience in Google, or set `--allowed-domains` (see [Restricting who can connect](#restricting-who-can-connect)).
 

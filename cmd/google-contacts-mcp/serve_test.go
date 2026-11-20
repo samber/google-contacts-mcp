@@ -38,8 +38,6 @@ func serveConfig(t *testing.T, extra ...string) config.Config {
 		"--listen=127.0.0.1:0",
 		"--db-path=" + filepath.Join(t.TempDir(), "db.sqlite"),
 		"--google-client-id=client-id",
-		"--operator-name=Ada",
-		"--operator-email=ops@example.com",
 	}, extra...)
 
 	cfg, err := config.Load(config.CmdServe, args, func(k string) string { return vars[k] })

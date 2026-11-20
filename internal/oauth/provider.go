@@ -103,7 +103,6 @@ type Server struct {
 	resource       string
 	enableDCR      bool
 	allowedDomains []string
-	operatorEmail  string
 	secureCookie   bool
 }
 
@@ -138,7 +137,6 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		resource:       issuer + mcpPath,
 		enableDCR:      cfg.EnableDCR,
 		allowedDomains: cfg.AllowedDomains,
-		operatorEmail:  cfg.OperatorEmail,
 		// config only allows plain http for localhost and 127.0.0.1.
 		secureCookie: cfg.BaseURL.Scheme == "https",
 	}

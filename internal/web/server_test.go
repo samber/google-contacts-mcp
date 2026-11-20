@@ -18,15 +18,14 @@ import (
 )
 
 const (
-	testKey           = "A:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	testBaseURL       = "https://contacts.example.com"
-	testOperatorName  = "Ada Operator"
-	testOperatorEmail = "ops@example.com"
-	testMetricsPath   = "/metrics"
-	testMetricsUser   = "prom"
-	testMetricsPass   = "0123456789abcdef-pass"
-	metricsBody       = "metrics-ok"
-	mcpBody           = "mcp-ok"
+	testKey         = "A:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	testBaseURL     = "https://contacts.example.com"
+	testSiteURL     = "https://site.example.com"
+	testMetricsPath = "/metrics"
+	testMetricsUser = "prom"
+	testMetricsPass = "0123456789abcdef-pass"
+	metricsBody     = "metrics-ok"
+	mcpBody         = "mcp-ok"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -44,8 +43,6 @@ func testConfig(t *testing.T) config.Config {
 		MetricsPath:     testMetricsPath,
 		MetricsUser:     testMetricsUser,
 		MetricsPassword: testMetricsPass,
-		OperatorName:    testOperatorName,
-		OperatorEmail:   testOperatorEmail,
 	}
 }
 
@@ -236,111 +233,54 @@ func TestRoutes_MCPAndOAuthMounted(t *testing.T) {
 	}
 }
 
-func TestPages_ShowOperator(t *testing.T) {
+func TestHome_RedirectsToSite(t *testing.T) {
 	t.Parallel()
 
-	h := newHandler(t, nil)
-	for _, path := range []string{"/", "/privacy"} {
-		t.Run(path, func(t *testing.T) {
-			t.Parallel()
-
-			res := do(t, h, http.MethodGet, path, nil)
-			if res.status != http.StatusOK {
-				t.Fatalf("status = %d", res.status)
-			}
-
-			for _, want := range []string{testOperatorName, testOperatorEmail} {
-				if !strings.Contains(res.body, want) {
-					t.Errorf("page lacks %q", want)
-				}
-			}
-
-			if got := res.header.Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") {
-				t.Errorf("Content-Security-Policy = %q", got)
-			}
-
-			if got := res.header.Get("X-Frame-Options"); got != "DENY" {
-				t.Errorf("X-Frame-Options = %q", got)
-			}
-		})
-	}
-
-	home := do(t, h, http.MethodGet, "/", nil)
-	for _, want := range []string{testBaseURL + "/mcp", "early access", "github.com/samber/google-contacts-mcp", `href="/privacy"`} {
-		if !strings.Contains(home.body, want) {
-			t.Errorf("home page lacks %q", want)
+	h := newHandler(t, func(c *config.Config) {
+		u, err := url.Parse(testSiteURL)
+		if err != nil {
+			t.Fatalf("parse site: %v", err)
 		}
-	}
-}
 
-func TestPages_EscapeOperator(t *testing.T) {
-	t.Parallel()
-
-	h := newHandler(t, func(c *config.Config) { c.OperatorName = "<script>x</script>" })
+		c.SiteURL = u
+	})
 
 	res := do(t, h, http.MethodGet, "/", nil)
-	if strings.Contains(res.body, "<script>x") {
-		t.Error("operator name rendered unescaped")
+	if res.status != http.StatusFound {
+		t.Fatalf("GET /: status %d, want 302", res.status)
+	}
+
+	if got := res.header.Get("Location"); got != testSiteURL {
+		t.Errorf("Location = %q, want %q", got, testSiteURL)
+	}
+
+	// The root route must not swallow unknown paths.
+	if res := do(t, h, http.MethodGet, "/no-such-page", nil); res.status != http.StatusNotFound {
+		t.Errorf("GET /no-such-page: status %d, want 404", res.status)
 	}
 }
 
-func TestPrivacy_ListsStoredData(t *testing.T) {
+func TestHome_NoSiteIs404(t *testing.T) {
 	t.Parallel()
 
 	h := newHandler(t, nil)
+	unknown := do(t, h, http.MethodGet, "/no-such-page", nil)
+	assertSame404(t, do(t, h, http.MethodGet, "/", nil), unknown)
+}
 
-	res := do(t, h, http.MethodGet, "/privacy", nil)
-	for _, want := range []string{
-		"e-mail address", "never stored", "Google account id", "encrypted",
-		"contacts", "tool inputs", "in clear", "180 days",
-		"myaccount.google.com/permissions",
-	} {
-		if !strings.Contains(res.body, want) {
-			t.Errorf("privacy page lacks %q", want)
+func TestPrivacy_RouteRemoved(t *testing.T) {
+	t.Parallel()
+
+	h := newHandler(t, func(c *config.Config) {
+		u, err := url.Parse(testSiteURL)
+		if err != nil {
+			t.Fatalf("parse site: %v", err)
 		}
-	}
-}
 
-func TestPrivacy_LimitedUseDisclosure(t *testing.T) {
-	t.Parallel()
+		c.SiteURL = u
+	})
 
-	h := newHandler(t, nil)
-
-	body := do(t, h, http.MethodGet, "/privacy", nil).body
-	for _, want := range []string{
-		"This service's use and transfer of information received from Google APIs adheres to the",
-		`href="https://developers.google.com/terms/api-services-user-data-policy"`,
-		"Google API Services User Data Policy</a>, including the Limited Use requirements.",
-	} {
-		// html/template escapes the apostrophe in text.
-		if !strings.Contains(strings.ReplaceAll(body, "&#39;", "'"), want) {
-			t.Errorf("privacy page lacks %q", want)
-		}
-	}
-}
-
-func TestPages_NonGETRejected(t *testing.T) {
-	t.Parallel()
-
-	h := newHandler(t, nil)
-	if res := do(t, h, http.MethodPost, "/privacy", nil); res.status != http.StatusMethodNotAllowed {
-		t.Errorf("POST /privacy: status %d, want 405", res.status)
-	}
-}
-
-func TestPrivacy_DeletionTimingAccurate(t *testing.T) {
-	t.Parallel()
-
-	h := newHandler(t, nil)
-
-	body := do(t, h, http.MethodGet, "/privacy", nil).body
-	for _, want := range []string{"expire after 10 minutes", "deleted within the hour", "backups", "backup retention"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("privacy page lacks %q", want)
-		}
-	}
-
-	if strings.Contains(body, "deleted after 10 minutes") {
-		t.Error("privacy page claims pending sign-ins are deleted after 10 minutes")
+	if res := do(t, h, http.MethodGet, "/privacy", nil); res.status != http.StatusNotFound {
+		t.Errorf("GET /privacy: status %d, want 404", res.status)
 	}
 }

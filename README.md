@@ -45,7 +45,7 @@ A LinkedIn profile is stored as a website of type `linkedin`. Groups can be give
 
 ### 1. What is stored
 
-The server keeps the minimum needed to keep you connected. The home page links to a privacy policy (`/privacy`) that says the same thing in plain words.
+The server keeps the minimum needed to keep you connected. The website's privacy policy (`/privacy` on the [landing page](https://google-contacts-mcp.samber.dev)) says the same thing in plain words.
 
 | Stored                                                                                                              | Never stored                                                                    |
 | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |

@@ -20,7 +20,7 @@
 - `internal/obs`: Prometheus metrics, per-call tool logging.
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
 - `internal/tools`: MCP server and ten contact tools.
-- `internal/web`: HTTP mux, `/` and `/privacy` pages, metrics basic auth.
+- `internal/web`: HTTP mux (MCP, OAuth), `GET /` redirect to `--site-url`, metrics basic auth. Renders no page.
 - `site/`: Astro website (landing page, privacy policy, terms of service) for the hosted instance; own gates and rules in `site/CLAUDE.md`.
 
 ## Gates

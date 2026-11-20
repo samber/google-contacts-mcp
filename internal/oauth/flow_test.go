@@ -40,7 +40,6 @@ const (
 	testClientID       = "client-1"
 	testRedirect       = "https://claude.example.com/api/callback"
 	testGoogleClientID = "google-client-id"
-	testOperatorEmail  = "op@example.com"
 	testState          = "client-state-123"
 	testKeyID          = "k1"
 )
@@ -222,7 +221,6 @@ func (e *env) newServer(base string, opts ...envOption) (*Server, *http.ServeMux
 		BaseURL:        baseURL,
 		GoogleClientID: testGoogleClientID,
 		EnableDCR:      true,
-		OperatorEmail:  testOperatorEmail,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -904,14 +902,18 @@ func TestFlow_EmailNotVerified(t *testing.T) {
 	errorPage(t, e.callback(e.approve(cp), cp.cookie), http.StatusForbidden)
 }
 
-func TestFlow_AccessDeniedShowsEarlyAccess(t *testing.T) {
+func TestFlow_AccessDeniedShowsGenericPage(t *testing.T) {
 	t.Parallel()
 
 	e := newEnv(t)
 	cp := e.authorize(authorizeParams(newPKCE()))
 	state := e.approve(cp)
 	rec := e.get("/oauth/google/callback?"+url.Values{"state": {state}, "error": {"access_denied"}}.Encode(), cp.cookie)
-	errorPage(t, rec, http.StatusForbidden, "early access: e-mail "+testOperatorEmail+" to join")
+	errorPage(t, rec, http.StatusBadGateway, "Google sign-in failed")
+
+	if strings.Contains(rec.Body.String(), "early access") {
+		t.Error("access_denied page still mentions early access")
+	}
 }
 
 func TestFlow_CSRFMismatch(t *testing.T) {

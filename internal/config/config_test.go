@@ -14,8 +14,6 @@ import (
 var requiredArgs = []string{
 	"--base-url=https://contacts.example.com",
 	"--google-client-id=client-id",
-	"--operator-name=Jane Doe",
-	"--operator-email=jane@example.com",
 }
 
 // testEncryptionKeys is a syntactically plausible keyring entry; Load only
@@ -106,8 +104,72 @@ func TestLoad_ProvidedValues(t *testing.T) {
 		t.Errorf("secrets not read from env: %q %q", cfg.GoogleClientSecret, cfg.EncryptionKeys)
 	}
 
-	if cfg.OperatorName != "Jane Doe" || cfg.OperatorEmail != "jane@example.com" {
-		t.Errorf("operator = %q %q", cfg.OperatorName, cfg.OperatorEmail)
+	if cfg.SiteURL != nil {
+		t.Errorf("SiteURL = %v, want nil when unset", cfg.SiteURL)
+	}
+}
+
+func TestLoad_SiteURL(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		"https://example.com":        true,
+		"https://example.com/":       true,
+		"https://example.com/about":  true,
+		"http://localhost:4321":      true,
+		"http://example.com":         false,
+		"ftp://example.com":          false,
+		"https://":                   false,
+		"not a url":                  false,
+		"//example.com":              false,
+		"http://localhost.evil.com/": false,
+	}
+	for raw, ok := range cases {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := Load(CmdServe, withArgs("--site-url="+raw), envFunc(nil))
+			if !ok {
+				if err == nil || !strings.Contains(err.Error(), "site-url") {
+					t.Errorf("err = %v, want error naming site-url", err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+
+			if cfg.SiteURL == nil || cfg.SiteURL.String() != raw {
+				t.Errorf("SiteURL = %v, want %q", cfg.SiteURL, raw)
+			}
+		})
+	}
+}
+
+func TestLoad_SiteURLFromEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(CmdServe, withArgs(), envFunc(map[string]string{"GCMCP_SITE_URL": "https://site.example.com"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.SiteURL == nil || cfg.SiteURL.String() != "https://site.example.com" {
+		t.Errorf("SiteURL = %v", cfg.SiteURL)
+	}
+}
+
+// TestLoad_OperatorFlagsRemoved pins the removal of the flags that only fed
+// the server-rendered pages: passing one is an unknown-flag error.
+func TestLoad_OperatorFlagsRemoved(t *testing.T) {
+	t.Parallel()
+
+	for _, flag := range []string{"--operator-name=Jane Doe", "--operator-email=jane@example.com"} {
+		if _, err := Load(CmdServe, withArgs(flag), envFunc(nil)); err == nil {
+			t.Errorf("%s: err = nil, want unknown-flag error", flag)
+		}
 	}
 }
 
@@ -202,8 +264,6 @@ func TestLoad_Required(t *testing.T) {
 	flagCases := map[string]string{
 		"base-url":         "--base-url",
 		"google-client-id": "--google-client-id",
-		"operator-name":    "--operator-name",
-		"operator-email":   "--operator-email",
 	}
 	for name, prefix := range flagCases {
 		t.Run(name, func(t *testing.T) {
@@ -260,8 +320,6 @@ func TestLoad_BaseURLMustBeHTTPS(t *testing.T) {
 			args := []string{
 				"--base-url=" + raw,
 				"--google-client-id=client-id",
-				"--operator-name=Jane Doe",
-				"--operator-email=jane@example.com",
 			}
 
 			_, err := Load(CmdServe, args, envFunc(nil))
