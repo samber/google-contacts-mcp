@@ -25,7 +25,8 @@ const { protocol, host, pathname } = new URL(MCP_URL);
     <!-- Shown by the script below: without JavaScript the URL is still selectable text. -->
     <button type="button" class="button copy" data-copy-button hidden>Copy</button>
   </div>
-  <p class="status" role="status" aria-live="polite" data-copy-status></p>
+  <!-- Screen readers only: sighted users see the button label switch to "Copied". -->
+  <p class="visually-hidden" role="status" aria-live="polite" data-copy-status></p>
 </div>
 
 <script>
@@ -124,11 +125,5 @@ const { protocol, host, pathname } = new URL(MCP_URL);
     border-color: var(--mint);
     background: var(--mint);
     color: var(--on-mint);
-  }
-
-  .status {
-    min-height: 1.4em;
-    color: var(--muted);
-    font-size: var(--step--1);
   }
 </style>
