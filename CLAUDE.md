@@ -21,6 +21,7 @@
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
 - `internal/tools`: MCP server and ten contact tools.
 - `internal/web`: HTTP mux, `/` and `/privacy` pages, metrics basic auth.
+- `site/`: Astro website (landing page, privacy policy, terms of service) for the hosted instance; own gates and rules in `site/CLAUDE.md`.
 
 ## Gates
 
