@@ -1,6 +1,7 @@
 // Package jobs runs the background cleanup of spec §10: hourly removal of
 // expired OAuth rows and pending authorizations, and a daily purge of
-// inactive users (Google grant revoked first) and unused clients.
+// inactive users (Google grant revoked first) and unused clients. It also
+// flushes the batched last_seen_at updates every minute.
 package jobs
 
 import (
@@ -17,6 +18,10 @@ const (
 	cleanupInterval = time.Hour
 	// purgeInterval is the spec's daily purge of inactive users (§10).
 	purgeInterval = 24 * time.Hour
+	// touchFlushInterval is how often accumulated last_seen_at updates reach the
+	// database: one transaction a minute whatever the traffic. The inactivity
+	// purge counts in days, so the lag is harmless.
+	touchFlushInterval = time.Minute
 	// inactivityWindow is the 180-day inactivity limit of spec §10; it also
 	// matches the refresh token lifetime, so a purged user holds no live grant.
 	inactivityWindow = 180 * 24 * time.Hour
@@ -31,13 +36,18 @@ type Revoker interface {
 	Revoke(ctx context.Context, token string) error
 }
 
-// Run performs every job once, then on its interval, until ctx is done.
-// The first pass runs at start so frequent restarts never skip the daily
-// purge. now is the clock; time.Now in production.
+// Run performs the cleanup and the purge once, then every job on its
+// interval, until ctx is done. The first pass runs at start so frequent
+// restarts never skip the daily purge. The last_seen_at flush has no first
+// pass: nothing is pending at start. It shares this goroutine with the purge,
+// so a flush and a purge never overlap. now is the clock; time.Now in
+// production.
 func Run(ctx context.Context, st *store.Store, rv Revoker, now func() time.Time) {
 	cleanup(ctx, st, now)
 	purge(ctx, st, rv, now)
 
+	flush := time.NewTicker(touchFlushInterval)
+	defer flush.Stop()
 	hourly := time.NewTicker(cleanupInterval)
 	defer hourly.Stop()
 	daily := time.NewTicker(purgeInterval)
@@ -46,11 +56,21 @@ func Run(ctx context.Context, st *store.Store, rv Revoker, now func() time.Time)
 		select {
 		case <-ctx.Done():
 			return
+		case <-flush.C:
+			flushTouches(ctx, st)
 		case <-hourly.C:
 			cleanup(ctx, st, now)
 		case <-daily.C:
 			purge(ctx, st, rv, now)
 		}
+	}
+}
+
+// flushTouches writes the pending last_seen_at updates. A failure keeps them
+// pending for the next tick and for the flush in Store.Close.
+func flushTouches(ctx context.Context, st *store.Store) {
+	if err := st.FlushTouches(ctx); err != nil {
+		logError(ctx, "jobs: flush last seen", err)
 	}
 }
 

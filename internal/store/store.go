@@ -42,6 +42,9 @@ const (
 	// maxOpenConns is 1 because SQLite allows one writer: a single connection
 	// serializes writes in Go instead of failing with SQLITE_BUSY.
 	maxOpenConns = 1
+	// closeFlushTimeout bounds the last_seen_at flush in Close; it matches the
+	// busy_timeout, the longest a write waits for another writer.
+	closeFlushTimeout = 5 * time.Second
 	// migrationsDir is the embedded directory holding NNN_name.sql files.
 	migrationsDir = "migrations"
 	// migrationExt filters embedded migration files.
@@ -66,8 +69,9 @@ type Store struct {
 	now func() time.Time
 
 	touchMu sync.Mutex
-	// touched holds the last last_seen_at write per user id, to throttle TouchUser.
-	touched map[string]time.Time
+	// pendingTouches holds, per user id, the latest activity time not yet
+	// written to users.last_seen_at. FlushTouches drains it.
+	pendingTouches map[string]time.Time
 }
 
 // Open opens (creating if needed) the database at path, applies pending
@@ -87,7 +91,7 @@ func Open(ctx context.Context, path string, kr *crypto.Keyring) (*Store, error) 
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
 	db.SetMaxOpenConns(maxOpenConns)
-	s := &Store{db: db, kr: kr, now: time.Now, touched: make(map[string]time.Time)}
+	s := &Store{db: db, kr: kr, now: time.Now, pendingTouches: make(map[string]time.Time)}
 	if err := s.init(ctx, path); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
@@ -104,9 +108,12 @@ func (s *Store) init(ctx context.Context, path string) error {
 	return s.migrate(ctx)
 }
 
-// Close closes the database.
+// Close writes the pending last_seen_at updates, then closes the database.
+// A failed flush does not prevent the close; both errors are returned.
 func (s *Store) Close() error {
-	return s.db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), closeFlushTimeout)
+	defer cancel()
+	return errors.Join(s.FlushTouches(ctx), s.db.Close())
 }
 
 // migrate applies every embedded migration not yet listed in

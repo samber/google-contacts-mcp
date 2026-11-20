@@ -14,7 +14,7 @@
 - `internal/contacts`: contact model, People API mapping, enrich/merge rules, typed errors.
 - `internal/crypto`: rotatable AES-256-GCM keyring (`keyid:base64`).
 - `internal/google`: Google OAuth exchange, per-user token source, People API client.
-- `internal/jobs`: hourly expired-row cleanup, daily 180-day inactive-user purge (guarded against reconnects), purge of clients unused 180 days or never used after 24 h.
+- `internal/jobs`: per-minute flush of batched `last_seen_at` (`TouchUser` only writes memory; `Store.Close` flushes too), hourly expired-row cleanup, daily 180-day inactive-user purge (guarded against reconnects), purge of clients unused 180 days or never used after 24 h.
 - `internal/limits`: per-user read/write token buckets, per-user write lock.
 - `internal/oauth`: authorization server: metadata, CIMD, DCR, consent, Google callback, token, revoke.
 - `internal/obs`: Prometheus metrics, per-call tool logging.

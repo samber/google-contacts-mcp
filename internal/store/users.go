@@ -15,9 +15,6 @@ import (
 const (
 	// userIDBytes random bytes give a 32-hex-char user id, unguessable and stable across e-mail changes.
 	userIDBytes = 16
-	// touchInterval bounds last_seen_at writes to one per user per minute; the
-	// inactivity purge counts in days, so finer precision buys nothing.
-	touchInterval = time.Minute
 	// maxEmailMatches is how many rows UserBySubOrEmail fetches by e-mail: two
 	// are enough to tell a unique match from an ambiguous one.
 	maxEmailMatches = 2
@@ -136,30 +133,96 @@ func collectUsers(rows *sql.Rows) (users []User, err error) {
 	return users, rows.Err()
 }
 
-// TouchUser records activity. It writes at most once per touchInterval per
-// user; the throttle is in memory, so a restart allows one early write.
-func (s *Store) TouchUser(ctx context.Context, id string) error {
+// TouchUser records that the user was active now. It only updates memory:
+// FlushTouches writes the accumulated times to the database, so a tool call
+// costs no database write. It never fails; the error result keeps the
+// signature the tools package depends on.
+func (s *Store) TouchUser(_ context.Context, id string) error {
 	now := s.now()
 	s.touchMu.Lock()
-	last, ok := s.touched[id]
-	if ok && now.Sub(last) < touchInterval {
-		s.touchMu.Unlock()
-		return nil
-	}
-	s.touched[id] = now
-	s.touchMu.Unlock()
-
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE users SET last_seen_at = ? WHERE id = ?`, now.Unix(), id); err != nil {
-		s.forgetTouch(id)
-		return fmt.Errorf("store: touch user: %w", err)
+	defer s.touchMu.Unlock()
+	if last, ok := s.pendingTouches[id]; !ok || now.After(last) {
+		s.pendingTouches[id] = now
 	}
 	return nil
 }
 
+// FlushTouches writes the pending activity times to users.last_seen_at in one
+// transaction, so any number of users costs one commit. It does nothing, and
+// touches no database file, when nothing is pending. A user's last_seen_at
+// never moves backwards. On failure the times stay pending for the next call.
+// A crash loses at most the activity since the last successful flush, which
+// the day-scale inactivity purge cannot notice.
+func (s *Store) FlushTouches(ctx context.Context) (err error) {
+	batch := s.takePendingTouches()
+	if len(batch) == 0 {
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			s.restoreTouches(batch)
+		}
+	}()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: flush touches: begin: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	for id, seen := range batch {
+		// max() keeps a newer value written meanwhile (UpsertUser on a reconnect).
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET last_seen_at = max(last_seen_at, ?) WHERE id = ?`, seen.Unix(), id); err != nil {
+			return fmt.Errorf("store: flush touches: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: flush touches: commit: %w", err)
+	}
+	return nil
+}
+
+// takePendingTouches hands the pending times to the caller and starts a new
+// empty set. It returns nil when nothing is pending.
+func (s *Store) takePendingTouches() map[string]time.Time {
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	if len(s.pendingTouches) == 0 {
+		return nil
+	}
+	batch := s.pendingTouches
+	s.pendingTouches = make(map[string]time.Time)
+	return batch
+}
+
+// restoreTouches puts back the times of a failed flush, keeping any newer one
+// recorded since.
+func (s *Store) restoreTouches(batch map[string]time.Time) {
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	for id, seen := range batch {
+		if cur, ok := s.pendingTouches[id]; !ok || seen.After(cur) {
+			s.pendingTouches[id] = seen
+		}
+	}
+}
+
+// touchedSince reports whether the user has activity, not yet flushed, at or
+// after cutoff.
+func (s *Store) touchedSince(id string, cutoff time.Time) bool {
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	seen, ok := s.pendingTouches[id]
+	return ok && !seen.Before(cutoff)
+}
+
+// forgetTouch drops the pending activity of a deleted user.
 func (s *Store) forgetTouch(id string) {
 	s.touchMu.Lock()
-	delete(s.touched, id)
+	delete(s.pendingTouches, id)
 	s.touchMu.Unlock()
 }
 
@@ -382,7 +445,9 @@ func (s *Store) DeleteUserIfInactive(ctx context.Context, userID string, cutoff 
 	if err != nil {
 		return false, fmt.Errorf("store: delete inactive user: %w", err)
 	}
-	if lastSeen >= cutoff.Unix() {
+	// Activity still waiting in memory for FlushTouches counts as seen: the
+	// purge must not delete a user who called a tool in the last minute.
+	if lastSeen >= cutoff.Unix() || s.touchedSince(userID, cutoff) {
 		return false, nil
 	}
 	match := true

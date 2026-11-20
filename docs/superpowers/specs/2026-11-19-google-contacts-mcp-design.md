@@ -201,6 +201,8 @@ SQLite, WAL mode. Stored:
 
 Never stored: contacts, names, phone numbers, notes, tool inputs and outputs, any token in clear.
 
+Activity is batched: a tool call only records the user's last-seen time in memory, and a background job writes all pending times to `users.last_seen_at` in one transaction every minute, and again when the store closes. A crash loses at most the last minute of activity, which the 180-day purge cannot notice. The purge treats activity still in memory as seen.
+
 Background job, hourly: delete expired fosite rows and pending authorizations. Daily: purge users inactive for 180 days (delete rows and revoke the Google token at Google's revoke endpoint), clients unused for 180 days, and clients that never obtained a token within 24 hours. The user delete re-checks `last_seen_at` and the stored refresh token in one transaction, and the revoke runs only after it succeeded, so a user who reconnects while the purge runs keeps their account and grant. Every disconnection logs `user disconnected` at info with `user_id` and `reason` (`inactive`, `google_revoked` or `cli`), never the e-mail.
 
 Schema migrations embedded in the binary, applied at start, numbered sequentially.

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -419,6 +421,9 @@ func TestInactiveUsers(t *testing.T) {
 	if err := s.TouchUser(ctx, touched.ID); err != nil {
 		t.Fatalf("TouchUser: %v", err)
 	}
+	if err := s.FlushTouches(ctx); err != nil {
+		t.Fatalf("FlushTouches: %v", err)
+	}
 
 	got, err := s.InactiveUsers(ctx, base.Add(time.Hour))
 	if err != nil {
@@ -436,44 +441,284 @@ func TestInactiveUsers(t *testing.T) {
 	}
 }
 
-func TestTouchUser_ThrottledPerMinute(t *testing.T) {
+// touchFixture opens a store whose clock the test moves with at.
+type touchFixture struct {
+	s    *Store
+	base time.Time
+	now  time.Time
+}
+
+func newTouchFixture(t *testing.T) *touchFixture {
+	t.Helper()
+	f := &touchFixture{s: openTemp(t), base: time.Unix(1_800_000_000, 0)}
+	f.at(0)
+	return f
+}
+
+// at moves the store clock to base+d.
+func (f *touchFixture) at(d time.Duration) {
+	f.now = f.base.Add(d)
+	f.s.now = func() time.Time { return f.now }
+}
+
+func (f *touchFixture) lastSeen(t *testing.T, sub string) time.Time {
+	t.Helper()
+	got, err := f.s.UserBySubOrEmail(context.Background(), sub)
+	if err != nil {
+		t.Fatalf("UserBySubOrEmail: %v", err)
+	}
+	return got.LastSeenAt
+}
+
+func TestTouchUser_WritesOnlyOnFlush(t *testing.T) {
 	ctx := context.Background()
-	s := openTemp(t)
+	f := newTouchFixture(t)
+	u, err := f.s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+
+	// Touches arrive out of order: the latest time wins, none reaches the database.
+	for _, d := range []time.Duration{10 * time.Second, 70 * time.Second, 30 * time.Second} {
+		f.at(d)
+		if err := f.s.TouchUser(ctx, u.ID); err != nil {
+			t.Fatalf("TouchUser: %v", err)
+		}
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base) {
+		t.Errorf("before flush: last_seen_at = %v, want unchanged %v", got, f.base)
+	}
+
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Fatalf("FlushTouches: %v", err)
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base.Add(70 * time.Second)) {
+		t.Errorf("after flush: last_seen_at = %v, want base+70s", got)
+	}
+
+	// A flushed time is not written again: overwrite the row, flush with
+	// nothing pending, and the overwrite must survive.
+	if _, err := f.s.db.ExecContext(ctx, `UPDATE users SET last_seen_at = ? WHERE id = ?`,
+		f.base.Add(5*time.Second).Unix(), u.ID); err != nil {
+		t.Fatalf("overwrite last_seen_at: %v", err)
+	}
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Fatalf("second FlushTouches: %v", err)
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base.Add(5 * time.Second)) {
+		t.Errorf("empty flush wrote: last_seen_at = %v, want base+5s", got)
+	}
+}
+
+func TestFlushTouches_NeverMovesLastSeenBackwards(t *testing.T) {
+	ctx := context.Background()
+	f := newTouchFixture(t)
+	f.at(10 * time.Second)
+	u, err := f.s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	// The touch is older than the row: a reconnect rewrote last_seen_at after it.
+	f.at(5 * time.Second)
+	if err := f.s.TouchUser(ctx, u.ID); err != nil {
+		t.Fatalf("TouchUser: %v", err)
+	}
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Fatalf("FlushTouches: %v", err)
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base.Add(10 * time.Second)) {
+		t.Errorf("last_seen_at = %v, want base+10s", got)
+	}
+}
+
+func TestFlushTouches_FailureKeepsTouchesPending(t *testing.T) {
+	ctx := context.Background()
+	f := newTouchFixture(t)
+	u, err := f.s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	f.at(10 * time.Second)
+	if err := f.s.TouchUser(ctx, u.ID); err != nil {
+		t.Fatalf("TouchUser: %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := f.s.FlushTouches(cancelled); err == nil {
+		t.Fatal("FlushTouches with a cancelled context succeeded")
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base) {
+		t.Fatalf("failed flush wrote: last_seen_at = %v", got)
+	}
+
+	// No new touch since: the retry alone must write the time the failed flush took.
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Fatalf("retry FlushTouches: %v", err)
+	}
+	if got := f.lastSeen(t, "sub-1"); !got.Equal(f.base.Add(10 * time.Second)) {
+		t.Errorf("after retry: last_seen_at = %v, want base+10s", got)
+	}
+}
+
+func TestFlushTouches_RestoreKeepsNewerTouch(t *testing.T) {
+	f := newTouchFixture(t)
+	id := "user-1"
+	f.s.pendingTouches[id] = f.base.Add(20 * time.Second)
+
+	f.s.restoreTouches(map[string]time.Time{id: f.base.Add(10 * time.Second)})
+	if got := f.s.pendingTouches[id]; !got.Equal(f.base.Add(20 * time.Second)) {
+		t.Errorf("older restored touch replaced a newer one: %v", got)
+	}
+	f.s.restoreTouches(map[string]time.Time{id: f.base.Add(30 * time.Second)})
+	if got := f.s.pendingTouches[id]; !got.Equal(f.base.Add(30 * time.Second)) {
+		t.Errorf("newer restored touch was dropped: %v", got)
+	}
+}
+
+func TestDeleteUser_DropsPendingTouch(t *testing.T) {
+	ctx := context.Background()
+	f := newTouchFixture(t)
+	u, err := f.s.UpsertUser(ctx, "sub-1", "a@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if err := f.s.TouchUser(ctx, u.ID); err != nil {
+		t.Fatalf("TouchUser: %v", err)
+	}
+	if err := f.s.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if n := len(f.s.pendingTouches); n != 0 {
+		t.Errorf("%d pending touches after DeleteUser, want 0", n)
+	}
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Errorf("FlushTouches: %v", err)
+	}
+}
+
+func TestDeleteUserIfInactive_PendingTouchKeepsUser(t *testing.T) {
+	ctx := context.Background()
+	f := newTouchFixture(t)
+	idle, err := f.s.UpsertUser(ctx, "idle", "idle@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	active, err := f.s.UpsertUser(ctx, "active", "active@example.com")
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	// Both rows were last seen at base; only "active" called a tool since, and
+	// that touch has not been flushed yet.
+	cutoff := f.base.Add(time.Hour)
+	f.at(2 * time.Hour)
+	if err := f.s.TouchUser(ctx, active.ID); err != nil {
+		t.Fatalf("TouchUser: %v", err)
+	}
+
+	if deleted, err := f.s.DeleteUserIfInactive(ctx, active.ID, cutoff, nil); err != nil || deleted {
+		t.Errorf("user with a pending touch: deleted %v, err %v; want false, nil", deleted, err)
+	}
+	if deleted, err := f.s.DeleteUserIfInactive(ctx, idle.ID, cutoff, nil); err != nil || !deleted {
+		t.Errorf("idle user: deleted %v, err %v; want true, nil", deleted, err)
+	}
+
+	// Once flushed, the database row alone keeps the user.
+	if err := f.s.FlushTouches(ctx); err != nil {
+		t.Fatalf("FlushTouches: %v", err)
+	}
+	if deleted, err := f.s.DeleteUserIfInactive(ctx, active.ID, cutoff, nil); err != nil || deleted {
+		t.Errorf("flushed user: deleted %v, err %v; want false, nil", deleted, err)
+	}
+}
+
+func TestClose_FlushesPendingTouches(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	s, err := Open(ctx, path, mustKeyring(t, testKeyA))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
 	base := time.Unix(1_800_000_000, 0)
 	s.now = func() time.Time { return base }
 	u, err := s.UpsertUser(ctx, "sub-1", "a@example.com")
 	if err != nil {
 		t.Fatalf("UpsertUser: %v", err)
 	}
-	lastSeen := func() time.Time {
-		t.Helper()
-		got, err := s.UserBySubOrEmail(ctx, "sub-1")
-		if err != nil {
-			t.Fatalf("UserBySubOrEmail: %v", err)
-		}
-		return got.LastSeenAt
-	}
-
 	s.now = func() time.Time { return base.Add(10 * time.Second) }
 	if err := s.TouchUser(ctx, u.ID); err != nil {
 		t.Fatalf("TouchUser: %v", err)
 	}
-	if got := lastSeen(); !got.Equal(base.Add(10 * time.Second)) {
-		t.Errorf("first touch: last_seen_at = %v", got)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	s.now = func() time.Time { return base.Add(30 * time.Second) }
-	if err := s.TouchUser(ctx, u.ID); err != nil {
-		t.Fatalf("TouchUser: %v", err)
+
+	got, err := openAt(t, path, testKeyA).UserBySubOrEmail(ctx, "sub-1")
+	if err != nil {
+		t.Fatalf("UserBySubOrEmail: %v", err)
 	}
-	if got := lastSeen(); !got.Equal(base.Add(10 * time.Second)) {
-		t.Errorf("touch within a minute wrote: last_seen_at = %v", got)
+	if !got.LastSeenAt.Equal(base.Add(10 * time.Second)) {
+		t.Errorf("last_seen_at after Close = %v, want base+10s", got.LastSeenAt)
 	}
-	s.now = func() time.Time { return base.Add(71 * time.Second) }
-	if err := s.TouchUser(ctx, u.ID); err != nil {
-		t.Fatalf("TouchUser: %v", err)
+}
+
+// TestTouchUser_ConcurrentWithFlush is meant for -race: touches race a flusher
+// and every touched user must end up written.
+func TestTouchUser_ConcurrentWithFlush(t *testing.T) {
+	const (
+		touchers      = 8
+		touchesEach   = 200
+		flushes       = 20
+		distinctUsers = 4
+	)
+	ctx := context.Background()
+	s := openTemp(t)
+	start := time.Now()
+	ids := make([]string, distinctUsers)
+	for i := range ids {
+		u, err := s.UpsertUser(ctx, fmt.Sprintf("sub-%d", i), fmt.Sprintf("u%d@example.com", i))
+		if err != nil {
+			t.Fatalf("UpsertUser: %v", err)
+		}
+		ids[i] = u.ID
+		// Reset to the past so only a flushed touch can move the row forward.
+		if _, err := s.db.ExecContext(ctx, `UPDATE users SET last_seen_at = 0 WHERE id = ?`, u.ID); err != nil {
+			t.Fatalf("reset last_seen_at: %v", err)
+		}
 	}
-	if got := lastSeen(); !got.Equal(base.Add(71 * time.Second)) {
-		t.Errorf("touch after a minute: last_seen_at = %v", got)
+
+	var wg sync.WaitGroup
+	for g := range touchers {
+		wg.Go(func() {
+			for i := range touchesEach {
+				if err := s.TouchUser(ctx, ids[(g+i)%distinctUsers]); err != nil {
+					t.Errorf("TouchUser: %v", err)
+					return
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		for range flushes {
+			if err := s.FlushTouches(ctx); err != nil {
+				t.Errorf("FlushTouches: %v", err)
+				return
+			}
+		}
+	})
+	wg.Wait()
+	if err := s.FlushTouches(ctx); err != nil {
+		t.Fatalf("final FlushTouches: %v", err)
+	}
+
+	for i := range ids {
+		got, err := s.UserBySubOrEmail(ctx, fmt.Sprintf("sub-%d", i))
+		if err != nil {
+			t.Fatalf("UserBySubOrEmail: %v", err)
+		}
+		if got.LastSeenAt.Unix() < start.Unix() {
+			t.Errorf("user %d: last_seen_at = %v, want at or after %v", i, got.LastSeenAt, start)
+		}
 	}
 }
 
