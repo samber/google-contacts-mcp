@@ -12,4 +12,12 @@ export default defineConfig({
   trailingSlash: 'never',
   build: { format: 'file' },
   integrations: [sitemap()],
+  vite: {
+    build: {
+      // The default minifier folds `animation` + `animation-timeline: view()` into one
+      // shorthand ("animation: linear both fill view()") that Chrome rejects, which drops
+      // every scroll-linked animation. esbuild keeps the longhands as written.
+      cssMinify: 'esbuild',
+    },
+  },
 });

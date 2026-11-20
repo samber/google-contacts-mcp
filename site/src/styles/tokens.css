@@ -1,32 +1,68 @@
 /*
- * Design tokens. The palette comes from a real index card: white stock, blue
- * ruled lines, a red header rule, a yellow highlighter on a cool grey desk.
+ * Design tokens. A white page, navy ink, and the logo's colours (cobalt blue,
+ * red, highlighter yellow) blended into one gradient for the hero and tile washes.
  * scripts/check-contrast.mjs reads this file: keep the light palette first and
- * the dark palette in the media block below it.
+ * the dark palette in the media block below it. The gate checks these pairs:
+ * --ink on --desk and --card, --red on --card, --on-mark on --mark.
+ *
+ * --desk      page background
+ * --card      tiles and floating UI
+ * --surface   tinted section background
+ * --ink       body text
+ * --muted     secondary text, the grey second half of headlines
+ * --red       "never kept" marks and small red accents
+ * --mark      pale mint: fields the assistant filled in, the selected label
+ * --on-mark   text on --mark
+ * --mint      solid mint: secondary buttons, badges, the star count
+ * --on-mint   text on --mint
+ * --blue      primary buttons; --link: blue as text
+ * --navy      the closing section, dark in both themes
+ * --g1..--g5  gradient stops, blue to mint through the logo's red
  */
 :root {
   color-scheme: light dark;
 
-  --desk: #e4e9ee;
+  --desk: #ffffff;
   --card: #ffffff;
-  --ink: #16202a;
-  --rule: #b4cbe3;
-  --red: #d33f49;
-  --mark: #ffe066;
-  /* Text printed on the highlighter stays dark in both themes. */
-  --on-mark: #16202a;
+  --surface: #f6f9fc;
+  --ink: #0d253f;
+  /* 6.3:1 on --card, 5.9:1 on --surface. */
+  --muted: #50617a;
+  --red: #c8372d;
+  --mark: #d9f7ea;
+  --on-mark: #0d253f;
+  /* --on-mint on --mint: 7.8:1. */
+  --mint: #2fd18b;
+  --on-mint: #0d253f;
+  /* White on --blue: 8:1. */
+  --blue: #2340c7;
+  --on-blue: #ffffff;
+  --link: #2340c7;
+  --navy: #0a1f38;
+  --on-navy: #ffffff;
+  /* 8.3:1 on --navy. */
+  --on-navy-muted: #a9b8cc;
+  /* Hairlines and tile borders: decorative, no contrast requirement. */
+  --line: #e3e8ee;
+  --line-strong: #c9d3df;
+
+  --g1: #2340c7;
+  --g2: #8a5cff;
+  --g3: #ff4f81;
+  --g4: #ff8a3d;
+  --g5: #2fd18b;
 
   --font-text: 'Schibsted Grotesk Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-typed: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+  /* System monospace: no web font download for tool names and URLs. */
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
 
-  /* Type scale: 17px body, ratio about 1.25. */
-  --step--1: 0.85rem;
+  /* Type scale: 17px body. */
+  --step--1: 0.875rem;
   --step-0: 1.0625rem;
-  --step-1: 1.33rem;
-  --step-2: 1.66rem;
-  --step-3: 2.08rem;
-  --step-4: 2.6rem;
-  --step-hero: clamp(2.5rem, 1.4rem + 5vw, 4.75rem);
+  --step-1: 1.25rem;
+  --step-2: clamp(1.5rem, 1.25rem + 0.9vw, 1.9rem);
+  --step-3: clamp(1.9rem, 1.4rem + 1.8vw, 2.75rem);
+  --step-hero: clamp(2.4rem, 1.6rem + 3.2vw, 4.1rem);
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -34,25 +70,41 @@
   --space-4: 1.5rem;
   --space-5: 2.5rem;
   --space-6: 4rem;
-  --space-7: 6rem;
+  --space-7: 7rem;
 
-  /* Index cards have small, even corners; nothing else on the page is rounded. */
-  --card-radius: 6px;
-  --card-shadow: 0 1px 0 var(--rule), 0 6px 14px -8px rgb(22 32 42 / 0.35);
+  /* One radius scale: 16px tiles, 8px controls, chips and floating UI rows. */
+  --radius: 16px;
+  --radius-sm: 8px;
+  /* Shadows tinted with navy, never pure black. */
+  --shadow: 0 2px 5px -1px rgb(13 37 63 / 0.12), 0 1px 3px -1px rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 30px 60px -12px rgb(13 37 63 / 0.25), 0 18px 36px -18px rgb(0 0 0 / 0.3);
 
-  --measure-text: 65ch;
-  --page-width: 72rem;
+  --measure-text: 62ch;
+  --page-width: 75rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --desk: #0f1720;
-    --card: #1b2631;
-    --ink: #e8eef4;
-    --rule: #34506b;
-    --red: #ff6b73;
-    --mark: #f2d14a;
-    --on-mark: #16202a;
-    --card-shadow: 0 1px 0 var(--rule), 0 8px 18px -10px rgb(0 0 0 / 0.7);
+    --desk: #0a1424;
+    --card: #101d31;
+    --surface: #0d192b;
+    --ink: #e8eef6;
+    --muted: #9aabc1;
+    --red: #ff7a6b;
+    /* Dark mint fill with light text: 10.2:1. */
+    --mark: #12402f;
+    --on-mark: #d9f7ea;
+    --mint: #2fd18b;
+    --on-mint: #0d253f;
+    --blue: #3a57e8;
+    --on-blue: #ffffff;
+    --link: #8ea2ff;
+    --navy: #07111f;
+    --on-navy: #ffffff;
+    --on-navy-muted: #a9b8cc;
+    --line: #1d2c42;
+    --line-strong: #2a3c56;
+    --shadow: 0 2px 5px -1px rgb(0 0 0 / 0.5);
+    --shadow-lg: 0 30px 60px -12px rgb(0 0 0 / 0.6), 0 18px 36px -18px rgb(0 0 0 / 0.5);
   }
 }

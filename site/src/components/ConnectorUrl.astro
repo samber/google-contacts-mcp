@@ -1,36 +1,56 @@
 ---
 import { MCP_URL } from '../data/site';
+
+type Props = {
+  /** Unique per instance: the page shows the box twice (hero and closing section). */
+  id: string;
+  /** Id of an existing heading that names the box; when set, the "Connector URL" label is not shown. */
+  labelledBy?: string;
+};
+
+const { id, labelledBy } = Astro.props;
+const labelId = labelledBy ?? `${id}-label`;
+
+// The URL is split for reading: the scheme is dimmed, the host stands out. Copy and
+// selection still take the full URL.
+const { protocol, host, pathname } = new URL(MCP_URL);
 ---
 
-<section id="connect" class="connect" aria-label="Connector URL">
+<div class="connector" role="group" aria-labelledby={labelId} data-copy-root>
+  {!labelledBy && <p id={labelId} class="label">Connector URL</p>}
   <div class="url-row">
-    <code id="mcp-url" class="typed url">{MCP_URL}</code>
+    <code class="url" data-url={MCP_URL}
+      ><span class="scheme">{protocol}//</span><span class="host">{host}</span><span class="path">{pathname}</span></code
+    >
     <!-- Shown by the script below: without JavaScript the URL is still selectable text. -->
-    <button type="button" class="copy" data-copy-button hidden>Copy URL</button>
+    <button type="button" class="button copy" data-copy-button hidden>Copy</button>
   </div>
   <p class="status" role="status" aria-live="polite" data-copy-status></p>
-  <ul class="steps">
-    <li>Claude: Settings, Connectors, Add custom connector.</li>
-    <li>ChatGPT: developer mode, Create app.</li>
-  </ul>
-</section>
+</div>
 
 <script>
   import { copyText } from '../scripts/copy.ts';
 
   const COPIED_LABEL_MS = 2000;
-  const button = document.querySelector<HTMLButtonElement>('[data-copy-button]');
-  const status = document.querySelector<HTMLElement>('[data-copy-status]');
-  const url = document.getElementById('mcp-url');
 
-  if (button && status && url) {
+  // One handler per copy box on the page.
+  for (const root of document.querySelectorAll<HTMLElement>('[data-copy-root]')) {
+    const button = root.querySelector<HTMLButtonElement>('[data-copy-button]');
+    const status = root.querySelector<HTMLElement>('[data-copy-status]');
+    const url = root.querySelector<HTMLElement>('[data-url]');
+    if (!button || !status || !url) continue;
+
     button.hidden = false;
     button.addEventListener('click', async () => {
-      const result = await copyText(url.textContent ?? '', navigator.clipboard);
+      const result = await copyText(url.dataset.url ?? '', navigator.clipboard);
       if (result === 'copied') {
         status.textContent = 'Copied';
         button.dataset.state = 'copied';
-        setTimeout(() => delete button.dataset.state, COPIED_LABEL_MS);
+        button.textContent = 'Copied';
+        setTimeout(() => {
+          delete button.dataset.state;
+          button.textContent = 'Copy';
+        }, COPIED_LABEL_MS);
         return;
       }
       // No clipboard access: select the URL so the user can copy it by hand.
@@ -45,35 +65,55 @@ import { MCP_URL } from '../data/site';
 </script>
 
 <style>
+  .connector {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+
   .url-row {
     display: flex;
     flex-wrap: wrap;
-    align-items: stretch;
-    gap: var(--space-2);
-    padding: var(--space-2);
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: 0.5rem 0.5rem 0.5rem 1.1rem;
     background: var(--card);
-    border: 2px solid var(--rule);
-    border-radius: var(--card-radius);
+    /* Sits on coloured sections: reset the text colour of the white box. */
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
   }
 
   .url {
-    flex: 1 1 16rem;
-    align-self: center;
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--step-0);
+    flex: 1 1 18rem;
+    /* Large enough to read at a glance; the 46-character URL still fits beside the button on desktop. */
+    font-size: 0.95rem;
+    letter-spacing: -0.01em;
     user-select: all;
+  }
+
+  .scheme {
+    color: var(--muted);
+  }
+
+  .host {
+    font-weight: 700;
+  }
+
+  .path {
+    color: var(--link);
+    font-weight: 700;
   }
 
   .copy {
     min-height: 2.75rem;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--card-radius);
-    background: var(--ink);
-    color: var(--card);
-    font: inherit;
-    font-weight: 700;
-    cursor: pointer;
+    padding-inline: 1.2rem;
   }
 
   .copy[hidden] {
@@ -81,20 +121,14 @@ import { MCP_URL } from '../data/site';
   }
 
   .copy[data-state='copied'] {
-    background: var(--mark);
-    color: var(--on-mark);
+    border-color: var(--mint);
+    background: var(--mint);
+    color: var(--on-mint);
   }
 
   .status {
-    min-height: 1.6em;
-    margin-top: var(--space-2);
-    font-size: var(--step--1);
-    font-weight: 600;
-  }
-
-  .steps {
-    padding: 0;
-    list-style: none;
+    min-height: 1.4em;
+    color: var(--muted);
     font-size: var(--step--1);
   }
 </style>

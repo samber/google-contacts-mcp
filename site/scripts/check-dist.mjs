@@ -9,6 +9,7 @@ const {
   MCP_URL,
   REPO_URL,
   OPERATOR_EMAIL,
+  OPERATOR_LINKEDIN = '',
   LEGAL_UPDATED = '',
   TOOLS = [],
   STORED = [],
@@ -37,6 +38,8 @@ const PAGES = [
 const ALLOWED_HOSTS = new Set([
   new URL(SITE_URL).host,
   'github.com',
+  // The operator's LinkedIn profile, linked from the footer (outbound link only).
+  'www.linkedin.com',
   'developers.google.com',
   'myaccount.google.com',
   'modelcontextprotocol.io',
@@ -231,9 +234,12 @@ if (existsSync(`${DIST}privacy.html`)) {
 }
 
 // Example data must be obviously fictional: a LinkedIn handle that could be a real person is not allowed.
+// The one exception is the operator's own profile (OPERATOR_LINKEDIN), linked from the footer.
+const operatorHandle = OPERATOR_LINKEDIN.match(/linkedin\.com\/in\/([A-Za-z0-9_-]+)/)?.[1];
 for (const { file } of PAGES) {
   if (!existsSync(`${DIST}${file}`)) continue;
   for (const [, handle] of read(file).matchAll(/linkedin\.com\/in\/([A-Za-z0-9_-]+)/g)) {
+    if (handle === operatorHandle) continue;
     if (!handle.includes('example')) fail(`${file}: LinkedIn handle "${handle}" does not look fictional (needs "example")`);
   }
 }

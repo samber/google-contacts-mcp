@@ -18,12 +18,13 @@
   "dependencies": {
     "@astrojs/sitemap": "^3.7.6",
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",
-    "@fontsource/courier-prime": "^5.3.0",
     "astro": "^7.4.13"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
+    "esbuild": "^0.28.2",
     "sharp": "^0.35.5",
+    "simple-icons": "^16.38.0",
     "typescript": "^6.0.3"
   }
 }

@@ -10,6 +10,9 @@ export const REPO_URL = 'https://github.com/samber/google-contacts-mcp';
 /** Person who operates the hosted instance, named in the policy and the terms. */
 export const OPERATOR_NAME = 'Samuel Berthe';
 
+/** The operator's LinkedIn profile, linked from the operator's name in the footer. */
+export const OPERATOR_LINKEDIN = 'https://www.linkedin.com/in/samuelberthe';
+
 /** Public contact address for privacy and terms questions. */
 export const OPERATOR_EMAIL = 'hello@samuel-berthe.fr';
 

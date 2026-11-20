@@ -1,5 +1,4 @@
 ---
-import IndexCard from '../components/IndexCard.astro';
 import Base from './Base.astro';
 
 type Props = {
@@ -22,41 +21,43 @@ const displayDate = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-GB',
 
 <Base title={`${title} | Google Contacts MCP`} description={description} path={path}>
   <div class="wrap legal">
-    <h1>{title}</h1>
-    <p class="updated">Last updated <time datetime={updated}>{displayDate}</time></p>
-    <IndexCard class="doc-card">
-      <article class="doc">
-        <slot />
-      </article>
-    </IndexCard>
+    <header class="title">
+      <h1>{title}</h1>
+      <p class="muted">Last updated <time datetime={updated}>{displayDate}</time></p>
+    </header>
+    <article class="doc">
+      <slot />
+    </article>
   </div>
 </Base>
 
 <style>
   .legal {
     display: grid;
-    gap: var(--space-3);
-    padding-block: var(--space-5) 0;
-    max-width: 52rem;
+    gap: var(--space-5);
+    max-width: 48rem;
+    padding-block: var(--space-6) 0;
+  }
+
+  .title {
+    display: grid;
+    gap: var(--space-2);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--line);
   }
 
   h1 {
-    font-size: var(--step-4);
+    font-size: var(--step-3);
   }
 
-  .updated {
+  .title p {
     font-size: var(--step--1);
-    font-weight: 600;
-  }
-
-  .doc-card {
-    margin-top: var(--space-3);
   }
 
   /* Long-form text: the rules reach slotted content, so they are global but scoped to .doc. */
   .doc :global(h2) {
     margin-top: var(--space-5);
-    font-size: var(--step-2);
+    font-size: var(--step-1);
   }
 
   .doc :global(h2:first-child) {
@@ -73,6 +74,14 @@ const displayDate = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-GB',
     display: grid;
     gap: var(--space-2);
     padding-left: 1.2rem;
+  }
+
+  .doc :global(li::marker) {
+    color: var(--muted);
+  }
+
+  .doc :global(a) {
+    text-decoration-color: var(--red);
   }
 
   .doc :global(h2 + p),
