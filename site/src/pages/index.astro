@@ -1,13 +1,47 @@
 ---
+import ConnectorUrl from '../components/ConnectorUrl.astro';
+import HeroCard from '../components/HeroCard.astro';
 import Base from '../layouts/Base.astro';
 ---
 
 <Base
-  title="Google Contacts MCP"
+  title="Google Contacts MCP: let Claude and ChatGPT manage your contacts"
   description="Connect Claude or ChatGPT to your Google Contacts: search, create and enrich contacts by talking to your assistant."
   path="/"
 >
-  <div class="wrap">
-    <h1>Google Contacts MCP</h1>
+  <div class="wrap hero">
+    <div class="intro">
+      <h1>Your assistant keeps your address book up to date.</h1>
+      <p class="lede">Claude and ChatGPT search, create and enrich your Google Contacts.</p>
+      <ConnectorUrl />
+    </div>
+    <HeroCard />
   </div>
 </Base>
+
+<style>
+  .hero {
+    display: grid;
+    gap: var(--space-5) var(--space-6);
+    padding-block: var(--space-5) 0;
+    align-items: center;
+  }
+
+  @media (min-width: 60rem) {
+    .hero {
+      grid-template-columns: 1.15fr 1fr;
+      padding-block: var(--space-6) 0;
+    }
+  }
+
+  .intro {
+    display: grid;
+    gap: var(--space-4);
+    max-width: 38rem;
+  }
+
+  .lede {
+    font-size: var(--step-1);
+    max-width: var(--measure-text);
+  }
+</style>

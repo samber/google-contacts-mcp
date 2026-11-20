@@ -1,0 +1,96 @@
+---
+import AlphaStrip from './AlphaStrip.astro';
+import IndexCard from './IndexCard.astro';
+
+// Fictional contact: no real person or company appears on the site.
+// Contacts are filed by surname, so the strip marks D.
+const FILED_UNDER = 'D';
+const FIELDS = [
+  { label: 'Company', value: 'Acme' },
+  { label: 'Title', value: 'CTO' },
+  { label: 'E-mail', value: 'camille@acme.example' },
+  { label: 'LinkedIn', value: 'linkedin.com/in/c-durand' },
+];
+---
+
+<figure class="hero-card" aria-label="Example contact card, filed under D">
+  <IndexCard header="Durand, Camille" ruled>
+    <dl class="fields">
+      {
+        FIELDS.map((field, index) => (
+          <div class="field" style={`--i:${index}; --chars:${field.value.length}`}>
+            <dt>{field.label}</dt>
+            <dd class="typed">{field.value}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </IndexCard>
+  <AlphaStrip active={FILED_UNDER} />
+</figure>
+
+<style>
+  .hero-card {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+  }
+
+  @media (min-width: 40rem) {
+    .hero-card {
+      grid-template-columns: 1fr auto;
+      align-items: stretch;
+    }
+  }
+
+  .fields {
+    margin: 0;
+  }
+
+  .field {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    column-gap: var(--space-2);
+    align-items: baseline;
+  }
+
+  /* On narrow screens the label sits on its own line, so values keep the full
+     width and an e-mail address never breaks mid-word. */
+  @media (max-width: 30rem) {
+    .field {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Printed form label: always visible, like the pre-printed lines of a real card. */
+  dt {
+    font-size: var(--step--1);
+    font-weight: 600;
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
+  }
+
+  dd {
+    margin: 0;
+    font-size: var(--step-0);
+    /* Keeps the last glyph from being clipped while the value is typed. */
+    padding-right: 0.1em;
+  }
+
+  /* The value is typed in once, a few seconds after load, then stays. Without
+     animation the final text is simply there. */
+  @media (prefers-reduced-motion: no-preference) {
+    dd {
+      animation: type-in calc(var(--chars) * 30ms) steps(var(--chars)) both;
+      animation-delay: calc(0.4s + var(--i) * 0.55s);
+    }
+  }
+
+  @keyframes type-in {
+    from {
+      clip-path: inset(0 100% 0 0);
+    }
+    to {
+      clip-path: inset(0 0 0 0);
+    }
+  }
+</style>
