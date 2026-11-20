@@ -34,6 +34,14 @@ golangci-lint run
 go test -race ./...
 ```
 
+## CI and automation
+
+- `.github/workflows/ci.yml`: runs the four gates on push to `main` and on every PR. No CI job builds or checks `site/`.
+- `.github/workflows/release.yml`: on a `v*` tag, reruns the gates, then GoReleaser publishes archives and a `ghcr.io` image (amd64, arm64).
+- `.github/dependabot.yml`: Actions and Docker monthly, Go modules weekly, `site/` npm monthly (patch updates ignored, `astro` + `@astrojs/*` grouped). It follows the `samber/ro` config.
+- `.github/FUNDING.yml`: GitHub Sponsors (`samber`) and Ko-fi, same as `samber/ro` and `samber/lo`.
+- Dependabot does not bump the pinned tool versions in the workflows (`golangci-lint` `version:`, `goreleaser` `version:`). Bump them by hand, in both workflows.
+
 ## Domain jargon
 
 - **CIMD**: Client ID Metadata Document. `client_id` is `https://` URL; server fetches JSON (SSRF guard, 5 s, 64 KiB, cached up to 24 h, served stale max 7 days, dropped on 404/410/400).
@@ -45,7 +53,7 @@ go test -race ./...
 - **People API `resourceName`**: contact id (`people/c123`); groups are `contactGroups/abc`. Tools accept only these two shapes.
 - **CONTACT source etag**: etag of person's `CONTACT` source; updates must send current one, stale etag = `failedPrecondition`.
 - **Testing mode**: unverified Google app; max 100 test users, Google refresh tokens expire 7 days after consent.
-- **FS Bucket**: Clever Cloud network volume mounted with `CC_FS_BUCKET`; holds the SQLite file, so journal mode is DELETE, not WAL. No replication or backup ships with the project.
+- **Network volume**: the SQLite file may sit on a mounted network filesystem, so journal mode is DELETE, not WAL. No replication or backup ships with the project.
 
 ## Conventions
 

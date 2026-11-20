@@ -37,7 +37,7 @@ Anti-goals (failure even if it works):
 
 - Go 1.25+ (go-sdk v1.8.0 declares `go 1.25.0`). Single CGO-free binary.
 - SQLite via `modernc.org/sqlite`, path from `--db-path`. Single writer, so exactly one instance.
-- On Clever Cloud the disk is wiped on every deploy, so the database sits on a mounted FS Bucket, a network filesystem. SQLite therefore uses the rollback journal, not WAL, and the app must run as exactly one process: file locks are not reliable between hosts. No replication or backup ships with the project.
+- Hosts that wipe the local disk on every deploy need the database on a mounted network filesystem. SQLite therefore uses the rollback journal, not WAL, and the app must run as exactly one process: file locks are not reliable between hosts. No replication or backup ships with the project.
 - Google scope `https://www.googleapis.com/auth/contacts` is sensitive (not restricted): a public app needs sensitive-scope verification, no CASA assessment.
 - Until verification passes, the public instance runs in Google "Testing" mode: at most 100 test users, and Google refresh tokens expire 7 days after consent.
 
@@ -254,12 +254,11 @@ Subcommands: `serve` (default), `genkey`, `rekey`, `disconnect <email|google-sub
 ## 14. Deliverables
 
 - Binary releases (linux, darwin; amd64, arm64) and a Docker image.
-- Clever Cloud (Go runtime): `CC_GO_PKG` builds the binary, `CC_RUN_COMMAND=google-contacts-mcp serve` runs it, `CC_FS_BUCKET=/data:<bucket host>` mounts the FS Bucket that holds the database. Pinned to one instance.
 - Docker image: entrypoint `google-contacts-mcp`, default command `serve`, database in the `/data` volume.
 - README ends with five tutorials:
   1. What is stored: stored = Google account id, e-mail address, encrypted Google tokens, hashes of our tokens, registered clients; never stored = contacts, tool inputs/outputs, tokens in clear, personal data in logs at default level. How to erase everything (disconnect, revoke at myaccount.google.com/permissions, 180-day purge).
   2. Google Cloud setup: project, People API, consent screen, the three scopes, Web OAuth client with redirect URI `https://<host>/oauth/google/callback`, Testing vs verified app, rotating the client secret and the encryption key.
-  3. Deploy on Clever Cloud: Go app plus FS Bucket add-on, listening on `0.0.0.0:8080`, pinned to one instance, custom domain and HTTPS. A redeploy can briefly run the new instance next to the old one, and two writers on a network volume can corrupt the database: recommend stopping the app before redeploying. Tell readers the bucket is the only copy and to take their own backups. Maintenance commands (`rekey`, `disconnect`) run on the running instance.
+  3. Deploy: binary or Docker image listening on `0.0.0.0:8080`, database on a persistent volume, pinned to one instance, custom domain and HTTPS. A redeploy can briefly run the new instance next to the old one, and two writers on a network volume can corrupt the database: recommend stopping the app before redeploying. Tell readers the volume is the only copy and to take their own backups. Maintenance commands (`rekey`, `disconnect`) run on the running instance.
   4. Connect Claude (Settings, Connectors, Add custom connector, `/mcp` URL) and ChatGPT (developer mode or Plugins page, Create app). Plan restrictions: tell readers to check OpenAI's current page; OpenAI's own docs conflict.
   5. Scheduled sync from e-mail signatures: a daily Claude task combining a Gmail connector with this server. Whether ChatGPT scheduled tasks can call these apps is unverified.
 - README sync prompt, shipped verbatim:
