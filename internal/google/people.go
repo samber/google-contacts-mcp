@@ -369,8 +369,7 @@ func callStatus(err error) int {
 		return http.StatusOK
 	}
 
-	var gerr *googleapi.Error
-	if errors.As(err, &gerr) {
+	if gerr, ok := errors.AsType[*googleapi.Error](err); ok {
 		return gerr.Code
 	}
 
@@ -389,8 +388,7 @@ func mapError(op string, err error) error {
 		return contacts.ErrUpstreamAuth
 	}
 
-	var gerr *googleapi.Error
-	if errors.As(err, &gerr) {
+	if gerr, ok := errors.AsType[*googleapi.Error](err); ok {
 		switch {
 		case gerr.Code == http.StatusUnauthorized:
 			return contacts.ErrUpstreamAuth
@@ -415,8 +413,7 @@ func mapError(op string, err error) error {
 		return contacts.UnreachableError{Op: op, Err: cause}
 	}
 
-	var uerr *url.Error
-	if errors.As(err, &uerr) {
+	if uerr, ok := errors.AsType[*url.Error](err); ok {
 		return fmt.Errorf("people %s: %w", op, uerr.Err)
 	}
 

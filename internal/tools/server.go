@@ -329,8 +329,7 @@ func newToolError(msg string) error { return &toolError{msg: msg} }
 // publicError is err as the assistant sees it: a toolError without its
 // cause, or err itself.
 func publicError(err error) error {
-	var te *toolError
-	if errors.As(err, &te) {
+	if te, ok := errors.AsType[*toolError](err); ok {
 		return newToolError(te.msg)
 	}
 

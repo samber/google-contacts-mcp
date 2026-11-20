@@ -266,8 +266,7 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 
 	dec := json.NewDecoder(http.MaxBytesReader(w, req.Body, maxRegistrationBody))
 	if err := dec.Decode(&in); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
+		if _, tooBig := errors.AsType[*http.MaxBytesError](err); tooBig {
 			r.writeError(w, req, errInvalidClientMetadata, "request body too large")
 			return
 		}

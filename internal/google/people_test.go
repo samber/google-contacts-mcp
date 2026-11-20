@@ -679,8 +679,7 @@ func TestMapError_TransportErrors(t *testing.T) {
 
 			err := mapError(opSearch, tc.err)
 
-			var ue contacts.UnreachableError
-			if !errors.As(err, &ue) {
+			if _, ok := errors.AsType[contacts.UnreachableError](err); !ok {
 				t.Fatalf("mapError = %T %v, want UnreachableError", err, err)
 			}
 
@@ -713,8 +712,7 @@ func TestGet_ConnectionRefusedIsUnreachable(t *testing.T) {
 	env.up.peopleURL = closed.URL + "/"
 	_, err := env.people(t).Get(context.Background(), "people/c1")
 
-	var ue contacts.UnreachableError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[contacts.UnreachableError](err); !ok {
 		t.Fatalf("err = %T %v, want UnreachableError", err, err)
 	}
 
