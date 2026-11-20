@@ -28,7 +28,9 @@ func (m *methodRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		r.Body = io.NopCloser(bytes.NewReader(body))
+
 		var msg struct {
 			Method string `json:"method"`
 		}
@@ -38,56 +40,77 @@ func (m *methodRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			m.mu.Unlock()
 		}
 	}
+
 	m.next.ServeHTTP(w, r)
 }
 
 func (m *methodRecorder) seen() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return slices.Clone(m.methods)
 }
 
 // recordingHarness is a harness whose server records request methods.
 func recordingHarness(t *testing.T) (*harness, *methodRecorder) {
 	t.Helper()
+
 	rec := &methodRecorder{}
 	h := newHarnessWrapped(t, func(next http.Handler) http.Handler {
 		rec.next = next
 		return rec
 	})
+
 	return h, rec
 }
 
 func legacyRoundTrip(t *testing.T, version string) {
+	t.Helper()
+
 	h, rec := recordingHarness(t)
-	h.people.put(contacts.Contact{GivenName: "Ada", Emails: []contacts.Typed{{Value: "ada@x.io"}}})
+	h.people.put(contacts.Contact{GivenName: testGivenName, Emails: []contacts.Typed{{Value: testEmail}}})
+
 	h.session = h.connect(version)
 	if got := h.session.InitializeResult().ProtocolVersion; got != version {
 		t.Fatalf("negotiated %q, want %q", got, version)
 	}
+
 	var out SearchOutput
-	h.ok("search_contacts", map[string]any{"query": "ada"}, &out)
+	h.ok("search_contacts", map[string]any{argQuery: "ada"}, &out)
+
 	if len(out.Contacts) != 1 {
 		t.Errorf("contacts = %+v", out.Contacts)
 	}
+
 	if seen := rec.seen(); !slices.Contains(seen, "initialize") || !slices.Contains(seen, "tools/call") {
 		t.Errorf("methods = %v", seen)
 	}
 }
 
-func TestLegacyInitialize_20250618(t *testing.T) { legacyRoundTrip(t, "2025-06-18") }
+func TestLegacyInitialize_20250618(t *testing.T) {
+	t.Parallel()
+	legacyRoundTrip(t, "2025-06-18")
+}
 
-func TestLegacyInitialize_20251125(t *testing.T) { legacyRoundTrip(t, "2025-11-25") }
+func TestLegacyInitialize_20251125(t *testing.T) {
+	t.Parallel()
+	legacyRoundTrip(t, "2025-11-25")
+}
 
 func TestStateless_20260728(t *testing.T) {
+	t.Parallel()
+
 	h, rec := recordingHarness(t)
-	h.people.put(contacts.Contact{GivenName: "Ada"})
+	h.people.put(contacts.Contact{GivenName: testGivenName})
 	h.session = h.connect("2026-07-28")
+
 	var out SearchOutput
-	h.ok("search_contacts", map[string]any{"query": "ada"}, &out)
+	h.ok("search_contacts", map[string]any{argQuery: "ada"}, &out)
+
 	if len(out.Contacts) != 1 {
 		t.Errorf("contacts = %+v", out.Contacts)
 	}
+
 	seen := rec.seen()
 	if slices.Contains(seen, "initialize") || !slices.Contains(seen, "tools/call") {
 		t.Errorf("methods = %v, want tools/call without initialize", seen)
@@ -95,26 +118,34 @@ func TestStateless_20260728(t *testing.T) {
 }
 
 func TestNoBearer_401WithResourceMetadata(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t)
 	for _, authz := range []string{"", "Bearer wrong"} {
-		req, err := http.NewRequest(http.MethodPost, h.srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		req.Header.Set("Content-Type", "application/json")
+
 		if authz != "" {
 			req.Header.Set("Authorization", authz)
 		}
+
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if err := resp.Body.Close(); err != nil {
 			t.Fatal(err)
 		}
+
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%q: status = %d, want 401", authz, resp.StatusCode)
 		}
+
 		want := `Bearer resource_metadata="` + testMetadataURL + `"`
 		if got := resp.Header.Get("WWW-Authenticate"); got != want {
 			t.Errorf("%q: WWW-Authenticate = %q, want %q", authz, got, want)

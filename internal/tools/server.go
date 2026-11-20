@@ -98,6 +98,7 @@ func (d Deps) logger() *slog.Logger {
 	if d.Logger == nil {
 		return slog.Default()
 	}
+
 	return d.Logger
 }
 
@@ -112,6 +113,7 @@ func NewServer(deps Deps) *mcp.Server {
 		},
 	})
 	registerTools(srv, deps)
+
 	return srv
 }
 
@@ -123,6 +125,7 @@ func NewHandler(deps Deps) http.Handler {
 		Stateless: true,
 		Logger:    deps.logger(),
 	})
+
 	return auth.RequireBearerToken(deps.Verifier, &auth.RequireBearerTokenOptions{
 		ResourceMetadataURL: deps.ResourceMetadataURL,
 	})(h)
@@ -151,10 +154,12 @@ func handle[In, Out any](deps Deps, write bool, fn toolFunc[In, Out]) mcp.ToolHa
 			out:          out,
 			err:          err,
 		})
+
 		if err != nil {
 			var zero Out
 			return nil, zero, publicError(err)
 		}
+
 		return res, out, nil
 	}
 }
@@ -167,6 +172,7 @@ func runTool[In, Out any](ctx context.Context, deps Deps, userID string, write b
 		// Unreachable behind RequireBearerToken with our verifier.
 		return nil, zero, &toolError{msg: msgNoUser, cause: errNoUser}
 	}
+
 	if err := deps.Store.TouchUser(ctx, userID); err != nil {
 		// last_seen only drives retention; a failed update must not
 		// block the user's call.
@@ -178,20 +184,25 @@ func runTool[In, Out any](ctx context.Context, deps Deps, userID string, write b
 		if write {
 			kind = rateKindWrite
 		}
+
 		return nil, zero, &toolError{msg: contacts.RateLimitedError{RetryAfter: retry}.Error(), rateKind: kind}
 	}
+
 	if write {
 		unlock := deps.Limiter.WriteLock(userID)
 		defer unlock()
 	}
+
 	p, err := deps.People.People(ctx, userID)
 	if err != nil {
 		return nil, zero, mapError(err, msgContactNotFound)
 	}
+
 	summary, out, err := fn(ctx, p, in)
 	if err != nil {
 		return nil, zero, mapError(err, msgContactNotFound)
 	}
+
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: summary}}}, out, nil
 }
 
@@ -214,17 +225,21 @@ type callRecord struct {
 func (d Deps) finishCall(ctx context.Context, rec callRecord) {
 	log := d.logger()
 	status, count := statusOK, resultCount(rec.out)
+
 	var te *toolError
+
 	isToolError := errors.As(rec.err, &te)
 	switch {
 	case isToolError && te.rateKind != "":
 		status, count = statusRateLimited, 0
+
 		d.Metrics.RateLimited(te.rateKind)
 	case isToolError && te.canceled:
 		status, count = statusCanceled, 0
 	case rec.err != nil:
 		status, count = statusError, 0
 	}
+
 	if isToolError && te.cause != nil {
 		// The cause comes from our code or Google's status, never from the
 		// tool arguments or a token. An unreachable Google is an outage to
@@ -233,9 +248,11 @@ func (d Deps) finishCall(ctx context.Context, rec callRecord) {
 		if te.unreachable {
 			level = slog.LevelWarn
 		}
+
 		log.Log(ctx, level, "tool call failed",
 			slog.String("tool", rec.tool), slog.String("user_id", rec.userID), slog.Any("error", te.cause))
 	}
+
 	attrs := []slog.Attr{
 		slog.String("tool", rec.tool),
 		slog.String("user_id", rec.userID),
@@ -252,6 +269,7 @@ func (d Deps) finishCall(ctx context.Context, rec callRecord) {
 			attrs = append(attrs, slog.Any("result", rec.out))
 		}
 	}
+
 	log.LogAttrs(ctx, slog.LevelInfo, "tool call", attrs...)
 	d.Metrics.ToolCall(rec.tool, status, rec.duration)
 }
@@ -261,6 +279,7 @@ func toolName(req *mcp.CallToolRequest) string {
 	if req == nil || req.Params == nil {
 		return ""
 	}
+
 	return req.Params.Name
 }
 
@@ -274,6 +293,7 @@ func resultCount(out any) int {
 	if rc, ok := out.(resultCounter); ok {
 		return rc.resultCount()
 	}
+
 	return 0
 }
 
@@ -301,6 +321,7 @@ func publicError(err error) error {
 	if errors.As(err, &te) {
 		return newToolError(te.msg)
 	}
+
 	return err
 }
 
@@ -309,11 +330,13 @@ func publicError(err error) error {
 // text was not built for the assistant become msgInternal, keeping the
 // original as cause for the log.
 func mapError(err error, notFound string) error {
-	var te *toolError
-	var rl contacts.RateLimitedError
-	var us contacts.UpstreamStatusError
-	var ge contacts.GroupError
-	var ue contacts.UnreachableError
+	var (
+		te *toolError
+		rl contacts.RateLimitedError
+		us contacts.UpstreamStatusError
+		ge contacts.GroupError
+		ue contacts.UnreachableError
+	)
 	switch {
 	case errors.As(err, &te):
 		return te
@@ -338,5 +361,6 @@ func mapError(err error, notFound string) error {
 		// Names only the group the caller gave.
 		return newToolError(ge.Error())
 	}
+
 	return &toolError{msg: msgInternal, cause: err}
 }

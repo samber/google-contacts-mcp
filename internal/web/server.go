@@ -81,6 +81,7 @@ func New(cfg config.Config, oauthSrv *oauth.Server, mcpHandler, metricsHandler h
 	if !cfg.Metrics || cfg.MetricsListen != "" || metricsHandler == nil {
 		return mux
 	}
+
 	return withMetrics(cfg, metricsHandler, mux)
 }
 
@@ -96,11 +97,13 @@ func NewMetricsHandler(cfg config.Config, metricsHandler http.Handler) http.Hand
 // panic the mux.
 func withMetrics(cfg config.Config, metricsHandler, next http.Handler) http.Handler {
 	protected := basicAuth(cfg.MetricsUser, cfg.MetricsPassword, metricsHandler)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == cfg.MetricsPath {
 			protected.ServeHTTP(w, r)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -109,15 +112,19 @@ func withMetrics(cfg config.Config, metricsHandler, next http.Handler) http.Hand
 // Both comparisons always run, so timing does not tell which one failed.
 func basicAuth(user, password string, next http.Handler) http.Handler {
 	wantUser, wantPassword := []byte(user), []byte(password)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUser, gotPassword, ok := r.BasicAuth()
 		userOK := subtle.ConstantTimeCompare([]byte(gotUser), wantUser)
+
 		passwordOK := subtle.ConstantTimeCompare([]byte(gotPassword), wantPassword)
 		if !ok || userOK&passwordOK != 1 {
 			w.Header().Set("WWW-Authenticate", authHeaderChallenge)
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -130,10 +137,13 @@ func page(name string, data pageData) http.Handler {
 		if err := templates.ExecuteTemplate(&buf, name, data); err != nil {
 			slog.ErrorContext(r.Context(), "web: render page", slog.String("template", name), slog.Any("error", err))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
 			return
 		}
+
 		oauth.SetPageHeaders(w.Header())
 		w.WriteHeader(http.StatusOK)
+
 		if _, err := buf.WriteTo(w); err != nil {
 			slog.DebugContext(r.Context(), "web: write page", slog.Any("error", err))
 		}
@@ -146,5 +156,6 @@ func baseURL(cfg config.Config) string {
 	if cfg.BaseURL == nil {
 		return ""
 	}
+
 	return strings.TrimSuffix(cfg.BaseURL.String(), "/")
 }

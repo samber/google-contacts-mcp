@@ -64,6 +64,7 @@ func New(readsPerMin, writesPerMin int) *Limiter {
 	if readsPerMin <= 0 || writesPerMin <= 0 {
 		panic(fmt.Sprintf("limits: rates must be positive, got reads=%d writes=%d", readsPerMin, writesPerMin))
 	}
+
 	return &Limiter{
 		readLimit:  perMinute(readsPerMin),
 		writeLimit: perMinute(writesPerMin),
@@ -93,7 +94,9 @@ func (l *Limiter) entryLocked(userID string, now time.Time) *entry {
 		}
 		l.users[userID] = e
 	}
+
 	e.lastSeen = now
+
 	return e
 }
 
@@ -116,11 +119,14 @@ func (l *Limiter) Allow(userID string, write bool) (ok bool, retryAfter time.Dur
 	// A reservation always succeeds for n=1 because burst >= 1; it reports the
 	// wait, and cancelling it returns the token so rejections stay free.
 	r := bucket.ReserveN(now, 1)
+
 	delay := r.DelayFrom(now)
 	if delay == 0 {
 		return true, 0
 	}
+
 	r.CancelAt(now)
+
 	return false, delay
 }
 
@@ -135,6 +141,7 @@ func (l *Limiter) WriteLock(userID string) (unlock func()) {
 	e.writeMu.Lock()
 
 	var once sync.Once
+
 	return func() {
 		once.Do(func() {
 			e.writeMu.Unlock()
@@ -150,6 +157,7 @@ func (l *Limiter) WriteLock(userID string) (unlock func()) {
 func (l *Limiter) Run(ctx context.Context) {
 	ticker := time.NewTicker(janitorInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -164,6 +172,7 @@ func (l *Limiter) Run(ctx context.Context) {
 func (l *Limiter) evictIdle(now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	for id, e := range l.users {
 		if e.lockRefs == 0 && now.Sub(e.lastSeen) >= idleTTL {
 			delete(l.users, id)

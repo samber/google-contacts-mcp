@@ -18,7 +18,9 @@ func NormalizeEmail(s string) string {
 // changed lists the People API fields that differ, sorted, or nil.
 func Enrich(existing, incoming Contact) (Contact, []string) {
 	merged := existing
+
 	var changed []string
+
 	mark := func(field string) {
 		if !slices.Contains(changed, field) {
 			changed = append(changed, field)
@@ -28,6 +30,7 @@ func Enrich(existing, incoming Contact) (Contact, []string) {
 	fill := func(dst *string, src, field string) {
 		if *dst == "" && strings.TrimSpace(src) != "" {
 			*dst = src
+
 			mark(field)
 		}
 	}
@@ -41,17 +44,21 @@ func Enrich(existing, incoming Contact) (Contact, []string) {
 	if merged.Emails, ok = appendNew(existing.Emails, incoming.Emails, emailKey); ok {
 		mark(FieldEmailAddresses)
 	}
+
 	if merged.Phones, ok = appendNew(existing.Phones, incoming.Phones, phoneKey); ok {
 		mark(FieldPhoneNumbers)
 	}
+
 	if merged.Websites, ok = appendNew(existing.Websites, incoming.Websites, websiteKey); ok {
 		mark(FieldURLs)
 	}
+
 	if merged.Addresses, ok = appendNew(existing.Addresses, incoming.Addresses, addressKey); ok {
 		mark(FieldAddresses)
 	}
 
 	slices.Sort(changed)
+
 	return merged, changed
 }
 
@@ -61,17 +68,21 @@ func Enrich(existing, incoming Contact) (Contact, []string) {
 func appendNew[T any](existing, incoming []T, key func(T) string) ([]T, bool) {
 	out := existing
 	copied := false
+
 	for _, item := range incoming {
 		k := key(item)
 		if k == "" || slices.ContainsFunc(out, func(e T) bool { return key(e) == k }) {
 			continue
 		}
+
 		if !copied {
 			out = slices.Clone(existing)
 			copied = true
 		}
+
 		out = append(out, item)
 	}
+
 	return out, copied
 }
 
@@ -84,11 +95,13 @@ func phoneKey(t Typed) string {
 		if r >= '0' && r <= '9' {
 			return r
 		}
+
 		return -1
 	}, t.Value)
 	if digits != "" {
 		return digits
 	}
+
 	return strings.ToLower(strings.TrimSpace(t.Value))
 }
 
@@ -99,7 +112,9 @@ func websiteKey(t Typed) string {
 	if i := strings.Index(s, "://"); i >= 0 {
 		s = s[i+len("://"):]
 	}
+
 	s = strings.TrimPrefix(s, "www.")
+
 	return strings.TrimRight(s, "/")
 }
 
@@ -111,5 +126,6 @@ func addressKey(a Address) string {
 	if strings.TrimSpace(s) == "" {
 		s = strings.Join([]string{a.Street, a.City, a.Region, a.PostalCode, a.Country}, " ")
 	}
+
 	return strings.Join(strings.FieldsFunc(strings.ToLower(s), unicode.IsSpace), " ")
 }

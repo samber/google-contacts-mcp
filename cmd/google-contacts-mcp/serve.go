@@ -50,6 +50,7 @@ const (
 func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err error) {
 	log := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(log)
+
 	if cfg.LogLevel <= slog.LevelDebug {
 		log.WarnContext(ctx, "debug log level writes personal data (tool arguments and results) to logs")
 	}
@@ -58,6 +59,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	if err != nil {
 		return err
 	}
+
 	st, err := store.Open(ctx, cfg.DBPath, kr)
 	if err != nil {
 		return err
@@ -79,6 +81,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 		OnPeopleCall: metrics.GoogleHook(),
 		Logger:       log,
 	}, st, nil)
+
 	osrv, err := oauth.New(cfg, oauth.Deps{
 		Store:    st,
 		Clients:  oauth.NewClientResolver(st, oauth.NewCIMDFetcher(oauth.CIMDOptions{})),
@@ -90,6 +93,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	if err != nil {
 		return err
 	}
+
 	lim := limits.New(cfg.RateLimitReads, cfg.RateLimitWrites)
 	mcpHandler := tools.NewHandler(tools.Deps{
 		People:              up,
@@ -101,6 +105,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 		Logger:              log,
 		Metrics:             metrics,
 	})
+
 	var metricsHandler http.Handler
 	if cfg.Metrics {
 		metricsHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
@@ -110,24 +115,50 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	if cfg.Metrics && cfg.MetricsListen != "" {
 		servers = append(servers, newHTTPServer(cfg.MetricsListen, web.NewMetricsHandler(cfg, metricsHandler), log))
 	}
-	// Bind every listener before starting anything, so a taken port fails
-	// the command at once.
-	listeners := make([]net.Listener, 0, len(servers))
-	for _, srv := range servers {
-		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", srv.Addr)
-		if err != nil {
-			return errors.Join(fmt.Errorf("listen %s: %w", srv.Addr, err), closeAll(listeners))
-		}
-		listeners = append(listeners, ln)
+
+	listeners, err := listenAll(ctx, servers)
+	if err != nil {
+		return err
 	}
 
 	bgCtx, stopBackground := context.WithCancel(ctx)
 	defer stopBackground()
+
 	var bg sync.WaitGroup
 	bg.Go(func() { lim.Run(bgCtx) })
 	bg.Go(func() { jobs.Run(bgCtx, st, up, time.Now) })
 
+	runErr := serveUntilDone(ctx, log, servers, listeners)
+
+	stopBackground()
+	bg.Wait()
+
+	return runErr
+}
+
+// listenAll binds every server's address before anything starts serving, so a
+// taken port fails the command at once. On failure it closes the listeners
+// already bound.
+func listenAll(ctx context.Context, servers []*http.Server) ([]net.Listener, error) {
+	listeners := make([]net.Listener, 0, len(servers))
+
+	for _, srv := range servers {
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", srv.Addr)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("listen %s: %w", srv.Addr, err), closeAll(listeners))
+		}
+
+		listeners = append(listeners, ln)
+	}
+
+	return listeners, nil
+}
+
+// serveUntilDone serves every listener until ctx is done or one server fails,
+// then drains all servers. It returns the serve failure and any shutdown errors.
+func serveUntilDone(ctx context.Context, log *slog.Logger, servers []*http.Server, listeners []net.Listener) error {
 	serveErr := make(chan error, len(servers))
+
 	for i, srv := range servers {
 		log.InfoContext(ctx, "listening", slog.String("addr", listeners[i].Addr().String()))
 		go func() {
@@ -138,6 +169,7 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	}
 
 	var runErr error
+
 	select {
 	case <-ctx.Done():
 		log.InfoContext(ctx, "shutting down")
@@ -147,13 +179,13 @@ func runServe(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 	// ctx is already done here; the drain needs its own deadline.
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
+
 	for _, srv := range servers {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("shutdown %s: %w", srv.Addr, err))
 		}
 	}
-	stopBackground()
-	bg.Wait()
+
 	return runErr
 }
 
@@ -173,5 +205,6 @@ func closeAll(listeners []net.Listener) error {
 	for _, ln := range listeners {
 		errs = append(errs, ln.Close())
 	}
+
 	return errors.Join(errs...)
 }

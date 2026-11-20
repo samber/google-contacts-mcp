@@ -69,5 +69,6 @@ func (e GroupError) Error() string {
 	if e.Matches == 0 {
 		return fmt.Sprintf("group %q not found", e.Group)
 	}
+
 	return fmt.Sprintf("group %q is ambiguous (%d matches)", e.Group, e.Matches)
 }

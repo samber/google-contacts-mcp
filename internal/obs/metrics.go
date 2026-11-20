@@ -78,6 +78,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{labelKind}),
 	}
 	reg.MustRegister(m.toolCalls, m.toolDuration, m.googleCalls, m.googleDuration, m.rateLimited, m.grants)
+
 	return m
 }
 
@@ -86,6 +87,7 @@ func (m *Metrics) ToolCall(tool, status string, d time.Duration) {
 	if m == nil {
 		return
 	}
+
 	m.toolCalls.WithLabelValues(tool, status).Inc()
 	m.toolDuration.WithLabelValues(tool).Observe(d.Seconds())
 }
@@ -95,6 +97,7 @@ func (m *Metrics) GoogleCall(method string, code int, d time.Duration) {
 	if m == nil {
 		return
 	}
+
 	m.googleCalls.WithLabelValues(method, strconv.Itoa(code)).Inc()
 	m.googleDuration.WithLabelValues(method).Observe(d.Seconds())
 }
@@ -104,6 +107,7 @@ func (m *Metrics) RateLimited(kind string) {
 	if m == nil {
 		return
 	}
+
 	m.rateLimited.WithLabelValues(kind).Inc()
 }
 
@@ -112,6 +116,7 @@ func (m *Metrics) Grant(kind string) {
 	if m == nil {
 		return
 	}
+
 	m.grants.WithLabelValues(kind).Inc()
 }
 

@@ -110,17 +110,21 @@ func (s *Store) SaveClient(ctx context.Context, c *OAuthClient) error {
 	if c == nil || c.ID == "" {
 		return errors.New("store: save client: empty id")
 	}
+
 	if c.Kind != ClientKindCIMD && c.Kind != ClientKindDCR {
 		return fmt.Errorf("store: save client: unknown kind %q", c.Kind)
 	}
+
 	meta, err := json.Marshal(clientMetadata{Name: c.Name, RedirectURIs: c.RedirectURIs})
 	if err != nil {
 		return fmt.Errorf("store: save client: %w", err)
 	}
+
 	var fetchedAt sql.NullInt64
 	if c.Kind == ClientKindCIMD {
 		fetchedAt = sql.NullInt64{Int64: s.now().Unix(), Valid: true}
 	}
+
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO oauth_clients (id, kind, metadata, fetched_at, expires_at)
 		VALUES (?, ?, ?, ?, ?)
@@ -130,30 +134,38 @@ func (s *Store) SaveClient(ctx context.Context, c *OAuthClient) error {
 		c.ID, c.Kind, string(meta), fetchedAt, nullUnix(c.ExpiresAt)); err != nil {
 		return fmt.Errorf("store: save client: %w", err)
 	}
+
 	return nil
 }
 
 // ClientByID returns a stored client, or ErrNotFound.
 func (s *Store) ClientByID(ctx context.Context, id string) (*OAuthClient, error) {
-	var kind, meta string
-	var expiresAt sql.NullInt64
+	var (
+		kind, meta string
+		expiresAt  sql.NullInt64
+	)
+
 	err := s.db.QueryRowContext(ctx,
 		`SELECT kind, metadata, expires_at FROM oauth_clients WHERE id = ?`, id).
 		Scan(&kind, &meta, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("store: client by id: %w", err)
 	}
+
 	var m clientMetadata
 	if err := json.Unmarshal([]byte(meta), &m); err != nil {
 		return nil, fmt.Errorf("store: client by id: decode metadata: %w", err)
 	}
+
 	c := &OAuthClient{ID: id, Kind: kind, Name: m.Name, RedirectURIs: m.RedirectURIs}
 	if expiresAt.Valid {
 		c.ExpiresAt = time.Unix(expiresAt.Int64, 0)
 	}
+
 	return c, nil
 }
 
@@ -162,6 +174,7 @@ func (s *Store) DeleteClient(ctx context.Context, id string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_clients WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: delete client: %w", err)
 	}
+
 	return nil
 }
 
@@ -171,9 +184,11 @@ func (s *Store) GetClient(ctx context.Context, id string) (fosite.Client, error)
 	if errors.Is(err, ErrNotFound) {
 		return nil, fosite.ErrNotFound
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return c, nil
 }
 
@@ -201,6 +216,7 @@ func (s *Store) PurgeUnusedClients(ctx context.Context, usedBefore, neverUsedBef
 	if err != nil {
 		return 0, fmt.Errorf("store: purge clients: %w", err)
 	}
+
 	return rowsAffected(res, "purge clients")
 }
 
@@ -219,23 +235,52 @@ type storedRequest struct {
 
 func filterForm(form url.Values) url.Values {
 	out := url.Values{}
+
 	for _, k := range storedFormKeys {
 		if v, ok := form[k]; ok {
 			out[k] = v
 		}
 	}
+
 	return out
 }
 
-// tokenExpiry maps a row kind to the session expiry fosite sets for it.
-var tokenExpiry = map[string]struct {
+// tokenKindExpiry names the session expiry fosite sets for a token kind and
+// the lifetime used when the session carries none.
+type tokenKindExpiry struct {
 	tokenType fosite.TokenType
 	fallback  time.Duration
-}{
+}
+
+// tokenExpiry maps a row kind to its tokenKindExpiry.
+var tokenExpiry = map[string]tokenKindExpiry{
 	kindCode:    {fosite.AuthorizeCode, fallbackCodeTTL},
 	kindPKCE:    {fosite.AuthorizeCode, fallbackCodeTTL},
 	kindAccess:  {fosite.AccessToken, fallbackAccessTTL},
 	kindRefresh: {fosite.RefreshToken, fallbackRefreshTTL},
+}
+
+// tokenExpiryAndOwner derives the expiry and owning user of a token from its
+// session. A missing session or zero expiry falls back to now plus the kind's
+// default lifetime; an empty subject leaves the owner NULL.
+func tokenExpiryAndOwner(sess fosite.Session, exp tokenKindExpiry, now time.Time) (time.Time, sql.NullString) {
+	var (
+		expiresAt time.Time
+		userID    sql.NullString
+	)
+
+	if sess != nil {
+		expiresAt = sess.GetExpiresAt(exp.tokenType)
+		if sub := sess.GetSubject(); sub != "" {
+			userID = sql.NullString{String: sub, Valid: true}
+		}
+	}
+
+	if expiresAt.IsZero() {
+		expiresAt = now.Add(exp.fallback)
+	}
+
+	return expiresAt, userID
 }
 
 // createToken stores req under (kind, signature). The session subject becomes
@@ -246,11 +291,14 @@ func (s *Store) createToken(ctx context.Context, kind, signature string, req fos
 	if client == nil {
 		return fmt.Errorf("store: create %s token: request has no client", kind)
 	}
+
 	sess := req.GetSession()
+
 	sessJSON, err := json.Marshal(sess)
 	if err != nil {
 		return fmt.Errorf("store: create %s token: encode session: %w", kind, err)
 	}
+
 	data, err := json.Marshal(storedRequest{
 		ID:                req.GetID(),
 		RequestedAt:       req.GetRequestedAt(),
@@ -264,19 +312,9 @@ func (s *Store) createToken(ctx context.Context, kind, signature string, req fos
 	if err != nil {
 		return fmt.Errorf("store: create %s token: encode request: %w", kind, err)
 	}
+
 	now := s.now()
-	exp := tokenExpiry[kind]
-	var expiresAt time.Time
-	var userID sql.NullString
-	if sess != nil {
-		expiresAt = sess.GetExpiresAt(exp.tokenType)
-		if sub := sess.GetSubject(); sub != "" {
-			userID = sql.NullString{String: sub, Valid: true}
-		}
-	}
-	if expiresAt.IsZero() {
-		expiresAt = now.Add(exp.fallback)
-	}
+	expiresAt, userID := tokenExpiryAndOwner(sess, tokenExpiry[kind], now)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -287,21 +325,25 @@ func (s *Store) createToken(ctx context.Context, kind, signature string, req fos
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO oauth_tokens (signature, kind, request_id, user_id, client_id, data, expires_at, active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
 		signature, kind, req.GetID(), userID, client.GetID(), data, expiresAt.Unix()); err != nil {
 		return fmt.Errorf("store: create %s token: %w", kind, err)
 	}
+
 	if kind == kindCode || kind == kindRefresh {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE oauth_clients SET last_used_at = ? WHERE id = ?`, now.Unix(), client.GetID()); err != nil {
 			return fmt.Errorf("store: create %s token: mark client used: %w", kind, err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: create %s token: commit: %w", kind, err)
 	}
+
 	return nil
 }
 
@@ -309,32 +351,41 @@ func (s *Store) createToken(ctx context.Context, kind, signature string, req fos
 // whether the row is still active. A missing row is fosite.ErrNotFound. The
 // session is decoded into session when non-nil, else into a new DefaultSession.
 func (s *Store) getToken(ctx context.Context, kind, signature string, session fosite.Session) (fosite.Requester, bool, error) {
-	var clientID string
-	var data []byte
-	var active bool
+	var (
+		clientID string
+		data     []byte
+		active   bool
+	)
+
 	err := s.db.QueryRowContext(ctx,
 		`SELECT client_id, data, active FROM oauth_tokens WHERE kind = ? AND signature = ?`, kind, signature).
 		Scan(&clientID, &data, &active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, fosite.ErrNotFound
 	}
+
 	if err != nil {
 		return nil, false, fmt.Errorf("store: get %s token: %w", kind, err)
 	}
+
 	var sr storedRequest
 	if err := json.Unmarshal(data, &sr); err != nil {
 		return nil, false, fmt.Errorf("store: get %s token: decode request: %w", kind, err)
 	}
+
 	if session == nil {
 		session = new(fosite.DefaultSession)
 	}
+
 	if err := json.Unmarshal(sr.Session, session); err != nil {
 		return nil, false, fmt.Errorf("store: get %s token: decode session: %w", kind, err)
 	}
+
 	client, err := s.GetClient(ctx, clientID)
 	if err != nil {
 		return nil, false, err
 	}
+
 	return &fosite.Request{
 		ID:                sr.ID,
 		RequestedAt:       sr.RequestedAt,
@@ -353,6 +404,7 @@ func (s *Store) deleteToken(ctx context.Context, kind, signature string) error {
 		`DELETE FROM oauth_tokens WHERE kind = ? AND signature = ?`, kind, signature); err != nil {
 		return fmt.Errorf("store: delete %s token: %w", kind, err)
 	}
+
 	return nil
 }
 
@@ -373,6 +425,7 @@ func deactivate(ctx context.Context, db execer, requestID string, kinds ...strin
 			return fmt.Errorf("store: revoke %s tokens: %w", kind, err)
 		}
 	}
+
 	return nil
 }
 
@@ -389,9 +442,11 @@ func (s *Store) GetAuthorizeCodeSession(ctx context.Context, signature string, s
 	if err != nil {
 		return nil, err
 	}
+
 	if !active {
 		return req, fosite.ErrInvalidatedAuthorizeCode
 	}
+
 	return req, nil
 }
 
@@ -405,21 +460,26 @@ func (s *Store) InvalidateAuthorizeCodeSession(ctx context.Context, signature st
 	if err != nil {
 		return fmt.Errorf("store: invalidate code: %w", err)
 	}
+
 	n, err := rowsAffected(res, "invalidate code")
 	if err != nil {
 		return err
 	}
+
 	if n > 0 {
 		return nil
 	}
+
 	var exists int
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM oauth_tokens WHERE kind = ? AND signature = ?`, kindCode, signature).Scan(&exists); err != nil {
 		return fmt.Errorf("store: invalidate code: %w", err)
 	}
+
 	if exists == 0 {
 		return fosite.ErrNotFound
 	}
+
 	return fosite.ErrInvalidatedAuthorizeCode
 }
 
@@ -457,9 +517,11 @@ func (s *Store) getActive(ctx context.Context, kind, signature string, session f
 	if err != nil {
 		return nil, err
 	}
+
 	if !active {
 		return req, fosite.ErrInactiveToken
 	}
+
 	return req, nil
 }
 
@@ -485,25 +547,31 @@ func (s *Store) RotateRefreshToken(ctx context.Context, requestID, signature str
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	res, err := tx.ExecContext(ctx,
 		`UPDATE oauth_tokens SET active = 0 WHERE kind = ? AND signature = ? AND request_id = ? AND active = 1`,
 		kindRefresh, signature, requestID)
 	if err != nil {
 		return fmt.Errorf("store: rotate refresh token: %w", err)
 	}
+
 	n, err := rowsAffected(res, "rotate refresh token")
 	if err != nil {
 		return err
 	}
+
 	if n == 0 {
 		return fosite.ErrSerializationFailure
 	}
+
 	if err := deactivate(ctx, tx, requestID, kindRefresh, kindAccess); err != nil {
 		return err
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: rotate refresh token: commit: %w", err)
 	}
+
 	return nil
 }
 
@@ -530,6 +598,7 @@ func (s *Store) GetPKCERequestSession(ctx context.Context, signature string, ses
 	if err != nil {
 		return nil, err
 	}
+
 	return req, nil
 }
 
@@ -546,6 +615,7 @@ func (s *Store) SavePending(ctx context.Context, id string, data []byte, ttl tim
 		id, data, s.now().Add(ttl).Unix()); err != nil {
 		return fmt.Errorf("store: save pending: %w", err)
 	}
+
 	return nil
 }
 
@@ -553,20 +623,26 @@ func (s *Store) SavePending(ctx context.Context, id string, data []byte, ttl tim
 // so a callback replay finds nothing. An expired entry is deleted and
 // reported as ErrNotFound.
 func (s *Store) TakePending(ctx context.Context, id string) ([]byte, error) {
-	var data []byte
-	var expiresAt int64
+	var (
+		data      []byte
+		expiresAt int64
+	)
+
 	err := s.db.QueryRowContext(ctx,
 		`DELETE FROM pending_authorizations WHERE id = ? RETURNING data, expires_at`, id).
 		Scan(&data, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("store: take pending: %w", err)
 	}
+
 	if expiresAt < s.now().Unix() {
 		return nil, ErrNotFound
 	}
+
 	return data, nil
 }
 
@@ -574,18 +650,22 @@ func (s *Store) TakePending(ctx context.Context, id string) ([]byte, error) {
 // strictly before now, and returns how many rows it deleted.
 func (s *Store) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
 	total := 0
+
 	for _, table := range []string{"oauth_tokens", "pending_authorizations"} {
 		// table comes from the fixed list above, never from input.
 		res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at < ?`, now.Unix()) // #nosec G202
 		if err != nil {
 			return total, fmt.Errorf("store: delete expired %s: %w", table, err)
 		}
+
 		n, err := rowsAffected(res, "delete expired "+table)
 		if err != nil {
 			return total, err
 		}
+
 		total += n
 	}
+
 	return total, nil
 }
 
@@ -594,6 +674,7 @@ func rowsAffected(res sql.Result, op string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("store: %s: %w", op, err)
 	}
+
 	return int(n), nil
 }
 
@@ -601,5 +682,6 @@ func nullUnix(t time.Time) sql.NullInt64 {
 	if t.IsZero() {
 		return sql.NullInt64{}
 	}
+
 	return sql.NullInt64{Int64: t.Unix(), Valid: true}
 }

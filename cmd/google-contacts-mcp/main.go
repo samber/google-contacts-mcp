@@ -46,56 +46,81 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 
 	switch cmd {
 	case cmdVersion:
-		_, err := fmt.Fprintln(stdout, version)
-		if err != nil {
-			return exitFailure
-		}
-		return 0
+		return runVersion(stdout)
 	case cmdGenkey:
-		// genkey never loads config: it creates the key the config needs.
-		if len(args) > 0 {
-			_, _ = fmt.Fprintf(stderr, "%s: unexpected arguments %q\n", cmd, args)
-			return exitFailure
-		}
-		entry, err := crypto.GenerateKey()
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
-			return exitFailure
-		}
-		if _, err := fmt.Fprintln(stdout, entry); err != nil {
-			return exitFailure
-		}
-		return 0
+		return runGenkey(cmd, args, stdout, stderr)
 	case config.CmdServe, config.CmdRekey, config.CmdDisconnect:
-		cfg, err := config.Load(cmd, args, getenv)
-		if err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				config.Usage(stdout)
-				return 0
-			}
-			_, _ = fmt.Fprintln(stderr, err)
-			return exitFailure
-		}
-		switch cmd {
-		case config.CmdRekey:
-			err = runRekey(context.Background(), cfg, stdout)
-		case config.CmdDisconnect:
-			err = runDisconnect(context.Background(), cfg, stdout)
-		default:
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			err = runServe(ctx, cfg, stdout)
-			stop()
-		}
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
-			return exitFailure
-		}
-		return 0
+		return runConfigured(cmd, args, getenv, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command %q (want %s, %s, %s, %s or %s)\n",
 			cmd, config.CmdServe, cmdGenkey, config.CmdRekey, config.CmdDisconnect, cmdVersion)
+
 		return exitFailure
 	}
+}
+
+// runVersion prints the build version.
+func runVersion(stdout io.Writer) int {
+	if _, err := fmt.Fprintln(stdout, version); err != nil {
+		return exitFailure
+	}
+
+	return 0
+}
+
+// runGenkey prints a fresh keyring entry. It never loads config: it creates
+// the key the config needs.
+func runGenkey(cmd string, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		_, _ = fmt.Fprintf(stderr, "%s: unexpected arguments %q\n", cmd, args)
+		return exitFailure
+	}
+
+	entry, err := crypto.GenerateKey()
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitFailure
+	}
+
+	if _, err := fmt.Fprintln(stdout, entry); err != nil {
+		return exitFailure
+	}
+
+	return 0
+}
+
+// runConfigured loads the configuration of a command that needs one, then runs it.
+func runConfigured(cmd string, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	cfg, err := config.Load(cmd, args, getenv)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			config.Usage(stdout)
+			return 0
+		}
+
+		_, _ = fmt.Fprintln(stderr, err)
+
+		return exitFailure
+	}
+
+	switch cmd {
+	case config.CmdRekey:
+		err = runRekey(context.Background(), cfg, stdout)
+	case config.CmdDisconnect:
+		err = runDisconnect(context.Background(), cfg, stdout)
+	default:
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = runServe(ctx, cfg, stdout)
+
+		stop()
+	}
+
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitFailure
+	}
+
+	return 0
 }
 
 // openStore parses the keyring and opens the database named by cfg.
@@ -104,6 +129,7 @@ func openStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return store.Open(ctx, cfg.DBPath, kr)
 }
 
@@ -114,11 +140,14 @@ func runRekey(ctx context.Context, cfg config.Config, stdout io.Writer) (err err
 		return err
 	}
 	defer func() { err = errors.Join(err, st.Close()) }()
+
 	n, err := st.Rekey(ctx)
 	if err != nil {
 		return err
 	}
+
 	_, err = fmt.Fprintf(stdout, "re-encrypted %d rows\n", n)
+
 	return err
 }
 
@@ -130,10 +159,12 @@ func runDisconnect(ctx context.Context, cfg config.Config, stdout io.Writer) (er
 		return err
 	}
 	defer func() { err = errors.Join(err, st.Close()) }()
+
 	up := google.NewUpstream(google.UpstreamConfig{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
 	}, st, nil)
+
 	return disconnectUser(ctx, st, up, cfg.Args[0], stdout)
 }
 
@@ -150,6 +181,7 @@ func disconnectUser(ctx context.Context, st *store.Store, rv revoker, who string
 	if err != nil {
 		return fmt.Errorf("disconnect %q: %w", who, err)
 	}
+
 	tok, err := st.GoogleToken(ctx, u.ID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -161,10 +193,13 @@ func disconnectUser(ctx context.Context, st *store.Store, rv revoker, who string
 			slog.WarnContext(ctx, "google revoke failed, deleting user anyway", "user_id", u.ID, "error", err)
 		}
 	}
+
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		return fmt.Errorf("disconnect %q: %w", who, err)
 	}
+
 	slog.InfoContext(ctx, "user disconnected", slog.String("user_id", u.ID), slog.String("reason", reasonCLI))
 	_, err = fmt.Fprintf(stdout, "disconnected %s\n", u.ID)
+
 	return err
 }

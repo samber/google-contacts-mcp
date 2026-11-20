@@ -98,18 +98,23 @@ func NewUpstream(cfg UpstreamConfig, st *store.Store, httpClient *http.Client) *
 	if cfg.Endpoint == (oauth2.Endpoint{}) {
 		cfg.Endpoint = googleoauth.Endpoint
 	}
+
 	if cfg.PeopleBaseURL == "" {
 		cfg.PeopleBaseURL = DefaultPeopleBaseURL
 	}
+
 	if cfg.RevokeURL == "" {
 		cfg.RevokeURL = DefaultRevokeURL
 	}
+
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+
 	return &Upstream{
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
@@ -140,17 +145,21 @@ func (u *Upstream) Exchange(ctx context.Context, code, codeVerifier string) (*oa
 	if err != nil {
 		return nil, fmt.Errorf("google code exchange: %w", sanitizeTokenError(err))
 	}
+
 	return tok, nil
 }
 
 // Revoke revokes a Google token, which also revokes the whole grant.
 func (u *Upstream) Revoke(ctx context.Context, token string) error {
 	form := url.Values{revokeTokenParam: {token}}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.revokeURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("google revoke: %w", err)
 	}
+
 	req.Header.Set("Content-Type", formContentType)
+
 	resp, err := u.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("google revoke: %w", err)
@@ -158,13 +167,16 @@ func (u *Upstream) Revoke(ctx context.Context, token string) error {
 	// The body is drained so the connection can be reused, never read for content.
 	_, drainErr := io.Copy(io.Discard, resp.Body)
 	closeErr := resp.Body.Close()
+
 	var statusErr error
 	if resp.StatusCode != http.StatusOK {
 		statusErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
+
 	if err := errors.Join(statusErr, drainErr, closeErr); err != nil {
 		return fmt.Errorf("google revoke: %w", err)
 	}
+
 	return nil
 }
 
@@ -175,22 +187,27 @@ func (u *Upstream) People(ctx context.Context, userID string) (contacts.People, 
 	if err != nil {
 		return nil, err
 	}
+
 	src := &clientTokenSource{
 		tok:  tok,
 		base: &userTokenSource{up: u, userID: userID, ctx: context.WithoutCancel(ctx)},
 	}
+
 	base := u.http.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
+
 	client := &http.Client{
 		Transport: &oauth2.Transport{Source: src, Base: base},
 		Timeout:   u.http.Timeout,
 	}
+
 	svc, err := people.NewService(ctx, option.WithEndpoint(u.peopleURL), option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("google people client: %w", err)
 	}
+
 	return &peopleClient{svc: svc, userID: userID, warmed: &u.warmed, onCall: u.onCall, tokens: src}, nil
 }
 
@@ -205,9 +222,11 @@ func (u *Upstream) loadToken(ctx context.Context, userID string) (*oauth2.Token,
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, contacts.ErrUpstreamAuth
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	return &oauth2.Token{AccessToken: t.AccessToken, RefreshToken: t.RefreshToken, Expiry: t.Expiry, TokenType: tokenTypeBearer}, nil
 }
 
@@ -222,12 +241,14 @@ func (u *Upstream) loadToken(ctx context.Context, userID string) (*oauth2.Token,
 func (u *Upstream) refresh(ctx context.Context, userID, rejected string) (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
+
 	for range maxRefreshAttempts {
 		tok, done, err := u.refreshOnce(ctx, userID, rejected)
 		if err != nil || done {
 			return tok, err
 		}
 	}
+
 	return nil, errors.New("google token refresh: grant changed during every attempt")
 }
 
@@ -238,9 +259,11 @@ func (u *Upstream) refreshOnce(ctx context.Context, userID, rejected string) (to
 	if err != nil {
 		return nil, true, err
 	}
+
 	if stored.Valid() && (rejected == "" || stored.AccessToken != rejected) {
 		return stored, true, nil
 	}
+
 	fresh, err := u.oauth.TokenSource(u.oauthContext(ctx), &oauth2.Token{RefreshToken: stored.RefreshToken}).Token()
 	if err != nil {
 		var re *oauth2.RetrieveError
@@ -254,22 +277,28 @@ func (u *Upstream) refreshOnce(ctx context.Context, userID, rejected string) (to
 		if delErr != nil {
 			return nil, true, errors.Join(contacts.ErrUpstreamAuth, delErr)
 		}
+
 		if deleted {
 			u.log.InfoContext(ctx, "user disconnected",
 				slog.String("user_id", userID), slog.String("reason", reasonGoogleRevoked))
+
 			return nil, true, contacts.ErrUpstreamAuth
 		}
+
 		return nil, false, nil
 	}
+
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = stored.RefreshToken
 	}
+
 	saved, err := u.st.SaveGoogleTokenIf(ctx, userID, stored.RefreshToken, store.GoogleToken{
 		RefreshToken: fresh.RefreshToken, AccessToken: fresh.AccessToken, Expiry: fresh.Expiry,
 	})
 	if err != nil {
 		return nil, true, err
 	}
+
 	return fresh, saved, nil
 }
 
@@ -280,10 +309,12 @@ func sanitizeTokenError(err error) error {
 	if !errors.As(err, &re) {
 		return err
 	}
+
 	status := 0
 	if re.Response != nil {
 		status = re.Response.StatusCode
 	}
+
 	return fmt.Errorf("token endpoint returned HTTP %d (%s)", status, re.ErrorCode)
 }
 
@@ -294,7 +325,7 @@ type userTokenSource struct {
 	userID string
 	// ctx is detached from cancellation: the token source outlives the
 	// request that created it and its refresh is shared by other callers.
-	ctx context.Context
+	ctx context.Context //nolint:containedctx // oauth2.TokenSource.Token() takes no context, so the detached one must live on the struct
 }
 
 // Token implements oauth2.TokenSource.
@@ -303,9 +334,11 @@ func (s *userTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if tok.Valid() {
 		return tok, nil
 	}
+
 	return s.shared("")
 }
 
@@ -319,10 +352,12 @@ func (s *userTokenSource) forceRefresh(rejected string) (*oauth2.Token, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		if tok.AccessToken != rejected {
 			return tok, nil
 		}
 	}
+
 	return nil, contacts.ErrUpstreamAuth
 }
 
@@ -335,6 +370,7 @@ func (s *userTokenSource) shared(rejected string) (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	shared, ok := v.(*oauth2.Token)
 	if !ok {
 		return nil, fmt.Errorf("google token refresh: unexpected result %T", v)
@@ -342,6 +378,7 @@ func (s *userTokenSource) shared(rejected string) (*oauth2.Token, error) {
 	// Every caller of the flight gets the same pointer; each gets a copy so
 	// no caller can change another's token.
 	cp := *shared
+
 	return &cp, nil
 }
 
@@ -358,14 +395,18 @@ type clientTokenSource struct {
 func (c *clientTokenSource) Token() (*oauth2.Token, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if !c.tok.Valid() {
 		tok, err := c.base.Token()
 		if err != nil {
 			return nil, err
 		}
+
 		c.tok = tok
 	}
+
 	cp := *c.tok
+
 	return &cp, nil
 }
 
@@ -373,14 +414,18 @@ func (c *clientTokenSource) Token() (*oauth2.Token, error) {
 func (c *clientTokenSource) forceRefresh() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	rejected := ""
 	if c.tok != nil {
 		rejected = c.tok.AccessToken
 	}
+
 	tok, err := c.base.forceRefresh(rejected)
 	if err != nil {
 		return err
 	}
+
 	c.tok = tok
+
 	return nil
 }

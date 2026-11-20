@@ -52,14 +52,17 @@ func newBucket(r rate.Limit, burst int) *bucket {
 func (b *bucket) take(now time.Time) (bool, time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	res := b.lim.ReserveN(now, 1)
 	if !res.OK() {
 		return false, minRetryAfter
 	}
+
 	if d := res.DelayFrom(now); d > 0 {
 		res.CancelAt(now)
 		return false, max(d, minRetryAfter)
 	}
+
 	return true, 0
 }
 

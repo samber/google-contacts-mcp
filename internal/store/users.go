@@ -41,13 +41,17 @@ type rowScanner interface {
 }
 
 func scanUser(row rowScanner) (User, error) {
-	var u User
-	var created, lastSeen int64
+	var (
+		u                 User
+		created, lastSeen int64
+	)
 	if err := row.Scan(&u.ID, &u.GoogleSub, &u.Email, &created, &lastSeen); err != nil {
 		return User{}, err
 	}
+
 	u.CreatedAt = time.Unix(created, 0)
 	u.LastSeenAt = time.Unix(lastSeen, 0)
+
 	return u, nil
 }
 
@@ -60,6 +64,7 @@ func newUserID() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("store: read user id: %w", err)
 	}
+
 	return hex.EncodeToString(b), nil
 }
 
@@ -69,11 +74,14 @@ func (s *Store) UpsertUser(ctx context.Context, sub, email string) (User, error)
 	if sub == "" {
 		return User{}, errors.New("store: empty google sub")
 	}
+
 	id, err := newUserID()
 	if err != nil {
 		return User{}, err
 	}
+
 	now := s.now().Unix()
+
 	u, err := scanUser(s.db.QueryRowContext(ctx, `
 		INSERT INTO users (id, google_sub, email, created_at, last_seen_at)
 		VALUES (?, ?, ?, ?, ?)
@@ -83,6 +91,7 @@ func (s *Store) UpsertUser(ctx context.Context, sub, email string) (User, error)
 	if err != nil {
 		return User{}, fmt.Errorf("store: upsert user: %w", err)
 	}
+
 	return u, nil
 }
 
@@ -93,11 +102,13 @@ func (s *Store) UserBySubOrEmail(ctx context.Context, q string) (User, error) {
 	if q == "" {
 		return User{}, ErrNotFound
 	}
+
 	u, err := scanUser(s.db.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM users WHERE google_sub = ?`, q))
 	if err == nil {
 		return u, nil
 	}
+
 	if !errors.Is(err, sql.ErrNoRows) {
 		return User{}, fmt.Errorf("store: user by sub: %w", err)
 	}
@@ -107,10 +118,12 @@ func (s *Store) UserBySubOrEmail(ctx context.Context, q string) (User, error) {
 	if err != nil {
 		return User{}, fmt.Errorf("store: user by email: %w", err)
 	}
+
 	users, err := collectUsers(rows)
 	if err != nil {
 		return User{}, fmt.Errorf("store: user by email: %w", err)
 	}
+
 	switch len(users) {
 	case 0:
 		return User{}, ErrNotFound
@@ -123,13 +136,16 @@ func (s *Store) UserBySubOrEmail(ctx context.Context, q string) (User, error) {
 
 func collectUsers(rows *sql.Rows) (users []User, err error) {
 	defer func() { err = errors.Join(err, rows.Close()) }()
+
 	for rows.Next() {
 		u, err := scanUser(rows)
 		if err != nil {
 			return nil, err
 		}
+
 		users = append(users, u)
 	}
+
 	return users, rows.Err()
 }
 
@@ -141,9 +157,11 @@ func (s *Store) TouchUser(_ context.Context, id string) error {
 	now := s.now()
 	s.touchMu.Lock()
 	defer s.touchMu.Unlock()
+
 	if last, ok := s.pendingTouches[id]; !ok || now.After(last) {
 		s.pendingTouches[id] = now
 	}
+
 	return nil
 }
 
@@ -163,15 +181,18 @@ func (s *Store) FlushTouches(ctx context.Context) (err error) {
 			s.restoreTouches(batch)
 		}
 	}()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: flush touches: begin: %w", err)
 	}
+
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	for id, seen := range batch {
 		// max() keeps a newer value written meanwhile (UpsertUser on a reconnect).
 		if _, err := tx.ExecContext(ctx,
@@ -179,9 +200,11 @@ func (s *Store) FlushTouches(ctx context.Context) (err error) {
 			return fmt.Errorf("store: flush touches: %w", err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: flush touches: commit: %w", err)
 	}
+
 	return nil
 }
 
@@ -190,11 +213,14 @@ func (s *Store) FlushTouches(ctx context.Context) (err error) {
 func (s *Store) takePendingTouches() map[string]time.Time {
 	s.touchMu.Lock()
 	defer s.touchMu.Unlock()
+
 	if len(s.pendingTouches) == 0 {
 		return nil
 	}
+
 	batch := s.pendingTouches
 	s.pendingTouches = make(map[string]time.Time)
+
 	return batch
 }
 
@@ -203,6 +229,7 @@ func (s *Store) takePendingTouches() map[string]time.Time {
 func (s *Store) restoreTouches(batch map[string]time.Time) {
 	s.touchMu.Lock()
 	defer s.touchMu.Unlock()
+
 	for id, seen := range batch {
 		if cur, ok := s.pendingTouches[id]; !ok || seen.After(cur) {
 			s.pendingTouches[id] = seen
@@ -215,7 +242,9 @@ func (s *Store) restoreTouches(batch map[string]time.Time) {
 func (s *Store) touchedSince(id string, cutoff time.Time) bool {
 	s.touchMu.Lock()
 	defer s.touchMu.Unlock()
+
 	seen, ok := s.pendingTouches[id]
+
 	return ok && !seen.Before(cutoff)
 }
 
@@ -230,14 +259,17 @@ func (s *Store) forgetTouch(id string) {
 // userID through the AEAD additional data, replacing any previous row.
 func (s *Store) SaveGoogleToken(ctx context.Context, userID string, t GoogleToken) error {
 	aad := []byte(userID)
+
 	refreshCT, err := s.kr.Encrypt([]byte(t.RefreshToken), aad)
 	if err != nil {
 		return fmt.Errorf("store: encrypt refresh token: %w", err)
 	}
+
 	accessCT, err := s.kr.Encrypt([]byte(t.AccessToken), aad)
 	if err != nil {
 		return fmt.Errorf("store: encrypt access token: %w", err)
 	}
+
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO google_tokens (user_id, refresh_ct, access_ct, expiry, key_id)
 		VALUES (?, ?, ?, ?, ?)
@@ -247,6 +279,7 @@ func (s *Store) SaveGoogleToken(ctx context.Context, userID string, t GoogleToke
 		userID, refreshCT, accessCT, unixOrZero(t.Expiry), s.kr.ActiveID()); err != nil {
 		return fmt.Errorf("store: save google token: %w", err)
 	}
+
 	return nil
 }
 
@@ -257,14 +290,17 @@ func (s *Store) SaveGoogleToken(ctx context.Context, userID string, t GoogleToke
 // reports false.
 func (s *Store) SaveGoogleTokenIf(ctx context.Context, userID, expectedRefresh string, t GoogleToken) (saved bool, err error) {
 	aad := []byte(userID)
+
 	refreshCT, err := s.kr.Encrypt([]byte(t.RefreshToken), aad)
 	if err != nil {
 		return false, fmt.Errorf("store: encrypt refresh token: %w", err)
 	}
+
 	accessCT, err := s.kr.Encrypt([]byte(t.AccessToken), aad)
 	if err != nil {
 		return false, fmt.Errorf("store: encrypt access token: %w", err)
 	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("store: save google token if: begin: %w", err)
@@ -274,19 +310,23 @@ func (s *Store) SaveGoogleTokenIf(ctx context.Context, userID, expectedRefresh s
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	match, err := s.refreshMatches(ctx, tx, userID, expectedRefresh)
 	if err != nil || !match {
 		return false, err
 	}
+
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE google_tokens SET refresh_ct = ?, access_ct = ?, expiry = ?, key_id = ?
 		WHERE user_id = ?`,
 		refreshCT, accessCT, unixOrZero(t.Expiry), s.kr.ActiveID(), userID); err != nil {
 		return false, fmt.Errorf("store: save google token if: %w", err)
 	}
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("store: save google token if: commit: %w", err)
 	}
+
 	return true, nil
 }
 
@@ -304,22 +344,28 @@ func (s *Store) DeleteUserIfRefresh(ctx context.Context, userID, expectedRefresh
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	match, err := s.refreshMatches(ctx, tx, userID, expectedRefresh)
 	if err != nil || !match {
 		return false, err
 	}
+
 	for _, query := range deleteUserChildren {
 		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
 			return false, fmt.Errorf("store: delete user rows: %w", err)
 		}
 	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID); err != nil {
 		return false, fmt.Errorf("store: delete user: %w", err)
 	}
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("store: delete user if: commit: %w", err)
 	}
+
 	s.forgetTouch(userID)
+
 	return true, nil
 }
 
@@ -327,47 +373,60 @@ func (s *Store) DeleteUserIfRefresh(ctx context.Context, userID, expectedRefresh
 // expected, comparing the decrypted values in constant time.
 func (s *Store) refreshMatches(ctx context.Context, tx *sql.Tx, userID, expected string) (bool, error) {
 	var refreshCT []byte
+
 	err := tx.QueryRowContext(ctx,
 		`SELECT refresh_ct FROM google_tokens WHERE user_id = ?`, userID).Scan(&refreshCT)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("store: load google token: %w", err)
 	}
+
 	current, err := s.kr.Decrypt(refreshCT, []byte(userID))
 	if err != nil {
 		return false, fmt.Errorf("store: decrypt refresh token: %w", err)
 	}
+
 	return subtle.ConstantTimeCompare(current, []byte(expected)) == 1, nil
 }
 
 // GoogleToken returns the decrypted tokens of a user, or ErrNotFound.
 func (s *Store) GoogleToken(ctx context.Context, userID string) (GoogleToken, error) {
-	var refreshCT, accessCT []byte
-	var expiry int64
+	var (
+		refreshCT, accessCT []byte
+		expiry              int64
+	)
+
 	err := s.db.QueryRowContext(ctx,
 		`SELECT refresh_ct, access_ct, expiry FROM google_tokens WHERE user_id = ?`, userID).
 		Scan(&refreshCT, &accessCT, &expiry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GoogleToken{}, ErrNotFound
 	}
+
 	if err != nil {
 		return GoogleToken{}, fmt.Errorf("store: load google token: %w", err)
 	}
+
 	aad := []byte(userID)
+
 	refresh, err := s.kr.Decrypt(refreshCT, aad)
 	if err != nil {
 		return GoogleToken{}, fmt.Errorf("store: decrypt refresh token: %w", err)
 	}
+
 	access, err := s.kr.Decrypt(accessCT, aad)
 	if err != nil {
 		return GoogleToken{}, fmt.Errorf("store: decrypt access token: %w", err)
 	}
+
 	t := GoogleToken{RefreshToken: string(refresh), AccessToken: string(access)}
 	if expiry != 0 {
 		t.Expiry = time.Unix(expiry, 0)
 	}
+
 	return t, nil
 }
 
@@ -375,6 +434,7 @@ func unixOrZero(t time.Time) int64 {
 	if t.IsZero() {
 		return 0
 	}
+
 	return t.Unix()
 }
 
@@ -397,26 +457,33 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) (err error) {
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	for _, query := range deleteUserChildren {
 		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
 			return fmt.Errorf("store: delete user rows: %w", err)
 		}
 	}
+
 	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID)
 	if err != nil {
 		return fmt.Errorf("store: delete user: %w", err)
 	}
+
 	n, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("store: delete user: %w", err)
 	}
+
 	if n == 0 {
 		return ErrNotFound
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: delete user: commit: %w", err)
 	}
+
 	s.forgetTouch(userID)
+
 	return nil
 }
 
@@ -437,11 +504,14 @@ func (s *Store) DeleteUserIfInactive(ctx context.Context, userID string, cutoff 
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	var lastSeen int64
+
 	err = tx.QueryRowContext(ctx, `SELECT last_seen_at FROM users WHERE id = ?`, userID).Scan(&lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("store: delete inactive user: %w", err)
 	}
@@ -450,30 +520,52 @@ func (s *Store) DeleteUserIfInactive(ctx context.Context, userID string, cutoff 
 	if lastSeen >= cutoff.Unix() || s.touchedSince(userID, cutoff) {
 		return false, nil
 	}
-	match := true
-	switch {
-	case expectedRefresh == nil:
-	case *expectedRefresh == "":
-		match, err = s.hasNoGoogleToken(ctx, tx, userID)
-	default:
-		match, err = s.refreshMatches(ctx, tx, userID, *expectedRefresh)
-	}
+
+	match, err := s.tokenGuardMatches(ctx, tx, userID, expectedRefresh)
 	if err != nil || !match {
 		return false, err
 	}
-	for _, query := range deleteUserChildren {
-		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
-			return false, fmt.Errorf("store: delete user rows: %w", err)
-		}
+
+	if err := deleteChildRows(ctx, tx, userID); err != nil {
+		return false, err
 	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID); err != nil {
 		return false, fmt.Errorf("store: delete inactive user: %w", err)
 	}
+
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("store: delete inactive user: commit: %w", err)
 	}
+
 	s.forgetTouch(userID)
+
 	return true, nil
+}
+
+// tokenGuardMatches reports whether the stored Google token still matches
+// expectedRefresh: nil skips the check, "" requires no stored token, any other
+// value must equal the stored refresh token.
+func (s *Store) tokenGuardMatches(ctx context.Context, tx *sql.Tx, userID string, expectedRefresh *string) (bool, error) {
+	switch {
+	case expectedRefresh == nil:
+		return true, nil
+	case *expectedRefresh == "":
+		return s.hasNoGoogleToken(ctx, tx, userID)
+	default:
+		return s.refreshMatches(ctx, tx, userID, *expectedRefresh)
+	}
+}
+
+// deleteChildRows runs every deleteUserChildren statement for userID inside tx.
+func deleteChildRows(ctx context.Context, tx *sql.Tx, userID string) error {
+	for _, query := range deleteUserChildren {
+		if _, err := tx.ExecContext(ctx, query, userID); err != nil {
+			return fmt.Errorf("store: delete user rows: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // hasNoGoogleToken reports whether userID has no stored Google token row.
@@ -483,6 +575,7 @@ func (s *Store) hasNoGoogleToken(ctx context.Context, tx *sql.Tx, userID string)
 		`SELECT count(*) FROM google_tokens WHERE user_id = ?`, userID).Scan(&n); err != nil {
 		return false, fmt.Errorf("store: count google tokens: %w", err)
 	}
+
 	return n == 0, nil
 }
 
@@ -493,10 +586,12 @@ func (s *Store) InactiveUsers(ctx context.Context, before time.Time) ([]User, er
 	if err != nil {
 		return nil, fmt.Errorf("store: inactive users: %w", err)
 	}
+
 	users, err := collectUsers(rows)
 	if err != nil {
 		return nil, fmt.Errorf("store: inactive users: %w", err)
 	}
+
 	return users, nil
 }
 
@@ -519,6 +614,7 @@ func (s *Store) Rekey(ctx context.Context) (n int, err error) {
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	rows, err := tx.QueryContext(ctx, `SELECT user_id, refresh_ct, access_ct FROM google_tokens`)
 	if err != nil {
 		return 0, fmt.Errorf("store: rekey: list: %w", err)
@@ -528,51 +624,64 @@ func (s *Store) Rekey(ctx context.Context) (n int, err error) {
 	if err != nil {
 		return 0, err
 	}
+
 	active := s.kr.ActiveID()
+
 	for _, row := range stale {
 		aad := []byte(row.userID)
+
 		refreshCT, err := s.reseal(row.refreshCT, aad)
 		if err != nil {
 			return 0, fmt.Errorf("store: rekey user %s: refresh token: %w", row.userID, err)
 		}
+
 		accessCT, err := s.reseal(row.accessCT, aad)
 		if err != nil {
 			return 0, fmt.Errorf("store: rekey user %s: access token: %w", row.userID, err)
 		}
+
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE google_tokens SET refresh_ct = ?, access_ct = ?, key_id = ? WHERE user_id = ?`,
 			refreshCT, accessCT, active, row.userID); err != nil {
 			return 0, fmt.Errorf("store: rekey user %s: %w", row.userID, err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("store: rekey: commit: %w", err)
 	}
+
 	return len(stale), nil
 }
 
 func (s *Store) collectStale(rows *sql.Rows) (stale []sealedToken, err error) {
 	defer func() { err = errors.Join(err, rows.Close()) }()
+
 	active := s.kr.ActiveID()
+
 	for rows.Next() {
 		var t sealedToken
 		if err := rows.Scan(&t.userID, &t.refreshCT, &t.accessCT); err != nil {
 			return nil, fmt.Errorf("store: rekey: scan: %w", err)
 		}
+
 		for _, ct := range [][]byte{t.refreshCT, t.accessCT} {
 			id, err := s.kr.KeyID(ct)
 			if err != nil {
 				return nil, fmt.Errorf("store: rekey user %s: %w", t.userID, err)
 			}
+
 			if id != active {
 				stale = append(stale, t)
 				break
 			}
 		}
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: rekey: list: %w", err)
 	}
+
 	return stale, nil
 }
 
@@ -582,5 +691,6 @@ func (s *Store) reseal(ct, aad []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return s.kr.Encrypt(plaintext, aad)
 }

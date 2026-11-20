@@ -115,16 +115,20 @@ func NewCIMDFetcher(opts CIMDOptions) *CIMDFetcher {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultFetchTimeout
 	}
+
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = defaultMaxBytes
 	}
+
 	if opts.MaxCache <= 0 {
 		opts.MaxCache = defaultMaxCache
 	}
+
 	f := &CIMDFetcher{opts: opts, allowAddr: isPublicAddr, now: time.Now}
 	if opts.AllowPrivate {
 		f.allowAddr = func(netip.Addr) bool { return true }
 	}
+
 	dialer := &net.Dialer{Timeout: opts.Timeout, Control: f.dialControl}
 	f.client = &http.Client{
 		Timeout: opts.Timeout,
@@ -139,6 +143,7 @@ func NewCIMDFetcher(opts CIMDOptions) *CIMDFetcher {
 		},
 		CheckRedirect: f.checkRedirect,
 	}
+
 	return f
 }
 
@@ -149,9 +154,11 @@ func (f *CIMDFetcher) dialControl(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return fmt.Errorf("%w: unparsable address %q", ErrForbiddenAddress, address)
 	}
+
 	if !f.allowAddr(ap.Addr().Unmap()) {
 		return fmt.Errorf("%w: %s", ErrForbiddenAddress, ap.Addr())
 	}
+
 	return nil
 }
 
@@ -159,9 +166,11 @@ func (f *CIMDFetcher) checkRedirect(req *http.Request, via []*http.Request) erro
 	if len(via) > maxRedirects {
 		return fmt.Errorf("oauth: client metadata: more than %d redirects", maxRedirects)
 	}
+
 	if req.URL.Scheme != schemeHTTPS {
 		return fmt.Errorf("oauth: client metadata: redirect to non-https scheme %q", req.URL.Scheme)
 	}
+
 	return f.checkLiteralHost(req.URL)
 }
 
@@ -171,6 +180,7 @@ func (f *CIMDFetcher) checkLiteralHost(u *url.URL) error {
 	if addr, err := netip.ParseAddr(u.Hostname()); err == nil && !f.allowAddr(addr.Unmap()) {
 		return fmt.Errorf("%w: %s", ErrForbiddenAddress, addr)
 	}
+
 	return nil
 }
 
@@ -180,55 +190,55 @@ func (f *CIMDFetcher) Fetch(ctx context.Context, clientID string) (*store.OAuthC
 	if err := validateClientIDURL(clientID); err != nil {
 		return nil, time.Time{}, err
 	}
+
 	u, err := url.Parse(clientID)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("oauth: client_id: %w", err)
 	}
+
 	if err := f.checkLiteralHost(u); err != nil {
 		return nil, time.Time{}, err
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, clientID, nil)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("oauth: client metadata: %w", err)
 	}
+
 	req.Header.Set("Accept", mediaTypeJSON)
+
 	resp, err := f.client.Do(req)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("oauth: fetch client metadata: %w", err)
 	}
+
 	defer func() { _ = resp.Body.Close() }() // read-only body; a close error changes nothing
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, time.Time{}, &fetchStatusError{status: resp.StatusCode}
 	}
-	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil || mt != mediaTypeJSON {
-		return nil, time.Time{}, fmt.Errorf("oauth: client metadata: content-type %q is not %s",
-			resp.Header.Get("Content-Type"), mediaTypeJSON)
-	}
-	if resp.ContentLength > f.opts.MaxBytes {
-		return nil, time.Time{}, fmt.Errorf("oauth: client metadata: larger than %d bytes", f.opts.MaxBytes)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, f.opts.MaxBytes+1))
+
+	body, err := readMetadataBody(resp, f.opts.MaxBytes)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("oauth: read client metadata: %w", err)
-	}
-	if int64(len(body)) > f.opts.MaxBytes {
-		return nil, time.Time{}, fmt.Errorf("oauth: client metadata: larger than %d bytes", f.opts.MaxBytes)
+		return nil, time.Time{}, err
 	}
 
 	var doc clientMetadataDocument
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, time.Time{}, fmt.Errorf("oauth: decode client metadata: %w", err)
 	}
+
 	if err := validateDocument(clientID, &doc); err != nil {
 		return nil, time.Time{}, err
 	}
+
 	name := strings.TrimSpace(doc.ClientName)
 	if name == "" {
 		name = u.Hostname()
 	}
+
 	expires := f.now().Add(cacheTTL(resp.Header.Get("Cache-Control"), f.opts.MaxCache))
+
 	return &store.OAuthClient{
 		ID:           clientID,
 		Kind:         store.ClientKindCIMD,
@@ -238,6 +248,31 @@ func (f *CIMDFetcher) Fetch(ctx context.Context, clientID string) (*store.OAuthC
 	}, expires, nil
 }
 
+// readMetadataBody checks that resp carries a JSON document no larger than
+// maxBytes and returns its body.
+func readMetadataBody(resp *http.Response, maxBytes int64) ([]byte, error) {
+	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mt != mediaTypeJSON {
+		return nil, fmt.Errorf("oauth: client metadata: content-type %q is not %s",
+			resp.Header.Get("Content-Type"), mediaTypeJSON)
+	}
+
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("oauth: client metadata: larger than %d bytes", maxBytes)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("oauth: read client metadata: %w", err)
+	}
+
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("oauth: client metadata: larger than %d bytes", maxBytes)
+	}
+
+	return body, nil
+}
+
 // validateClientIDURL enforces the CIMD client_id URL rules: https, a host,
 // a path other than "/", no dot segments, no fragment and no userinfo.
 func validateClientIDURL(id string) error {
@@ -245,6 +280,7 @@ func validateClientIDURL(id string) error {
 	if err != nil {
 		return fmt.Errorf("oauth: client_id is not a URL: %w", err)
 	}
+
 	switch {
 	case u.Scheme != schemeHTTPS:
 		return errors.New("oauth: client_id URL must use https")
@@ -257,11 +293,13 @@ func validateClientIDURL(id string) error {
 	case u.Path == "" || u.Path == "/":
 		return errors.New("oauth: client_id URL must have a path")
 	}
+
 	for seg := range strings.SplitSeq(u.Path, "/") {
 		if seg == "." || seg == ".." {
 			return errors.New("oauth: client_id URL must not contain dot segments")
 		}
 	}
+
 	return nil
 }
 
@@ -269,28 +307,35 @@ func validateDocument(clientID string, doc *clientMetadataDocument) error {
 	if doc.ClientID != clientID {
 		return fmt.Errorf("oauth: client metadata client_id %q does not match its URL", doc.ClientID)
 	}
+
 	if doc.TokenEndpointAuthMethod != "" && doc.TokenEndpointAuthMethod != authMethodNone {
 		return fmt.Errorf("oauth: client metadata: token_endpoint_auth_method %q not supported, only %q",
 			doc.TokenEndpointAuthMethod, authMethodNone)
 	}
+
 	if utf8.RuneCountInString(strings.TrimSpace(doc.ClientName)) > maxClientNameRunes {
 		return fmt.Errorf("oauth: client metadata: client_name longer than %d characters", maxClientNameRunes)
 	}
+
 	if len(doc.RedirectURIs) == 0 {
 		return errors.New("oauth: client metadata: redirect_uris is empty")
 	}
+
 	if len(doc.RedirectURIs) > maxRedirectURIs {
 		return fmt.Errorf("oauth: client metadata: more than %d redirect_uris", maxRedirectURIs)
 	}
+
 	for _, r := range doc.RedirectURIs {
 		if len(r) > maxRedirectURIBytes {
 			return fmt.Errorf("oauth: client metadata: a redirect_uri is longer than %d bytes", maxRedirectURIBytes)
 		}
+
 		u, err := url.Parse(r)
 		if err != nil || !u.IsAbs() || u.Fragment != "" {
 			return fmt.Errorf("oauth: client metadata: redirect_uri %q is not an absolute URI without fragment", r)
 		}
 	}
+
 	return nil
 }
 
@@ -299,23 +344,29 @@ func validateDocument(clientID string, doc *clientMetadataDocument) error {
 // itself capped at maxCache.
 func cacheTTL(header string, maxCache time.Duration) time.Duration {
 	fallback := min(defaultCacheTTL, maxCache)
+
 	for directive := range strings.SplitSeq(header, ",") {
 		key, val, ok := strings.Cut(strings.TrimSpace(directive), "=")
 		if !ok || !strings.EqualFold(strings.TrimSpace(key), cacheControlMaxAge) {
 			continue
 		}
+
 		secs, err := strconv.ParseInt(strings.Trim(strings.TrimSpace(val), `"`), 10, 64)
 		if errors.Is(err, strconv.ErrRange) && secs > 0 {
 			return maxCache
 		}
+
 		if err != nil || secs <= 0 {
 			return fallback
 		}
+
 		if secs >= int64(maxCache/time.Second) {
 			return maxCache
 		}
+
 		return time.Duration(secs) * time.Second
 	}
+
 	return fallback
 }
 
@@ -327,10 +378,12 @@ func isPublicAddr(addr netip.Addr) bool {
 		addr.IsInterfaceLocalMulticast() || addr.IsMulticast() {
 		return false
 	}
+
 	for _, p := range nonPublicPrefixes {
 		if p.Contains(addr) {
 			return false
 		}
 	}
+
 	return true
 }

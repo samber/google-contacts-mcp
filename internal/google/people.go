@@ -94,23 +94,28 @@ func (p *peopleClient) Search(ctx context.Context, query string, limit int) ([]c
 		}); err != nil {
 			return nil, err
 		}
+
 		p.warmed.Store(p.userID, true)
 	}
+
 	if limit <= 0 || limit > maxSearchPageSize {
 		limit = maxSearchPageSize
 	}
+
 	resp, err := retryRead(ctx, p, opSearch, func() (*people.SearchResponse, error) {
 		return p.svc.People.SearchContacts().Query(query).ReadMask(personFields).PageSize(int64(limit)).Context(ctx).Do()
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	out := make([]contacts.Contact, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		if r != nil && r.Person != nil {
 			out = append(out, contacts.FromPerson(r.Person))
 		}
 	}
+
 	return out, nil
 }
 
@@ -122,23 +127,28 @@ func (p *peopleClient) List(ctx context.Context, pageSize int, pageToken, sortOr
 		if pageSize > 0 {
 			call = call.PageSize(int64(min(pageSize, maxListPageSize)))
 		}
+
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
+
 		if sortOrder != "" {
 			call = call.SortOrder(sortOrder)
 		}
+
 		return call.Do()
 	})
 	if err != nil {
 		return nil, "", err
 	}
+
 	out := make([]contacts.Contact, 0, len(resp.Connections))
 	for _, person := range resp.Connections {
 		if person != nil {
 			out = append(out, contacts.FromPerson(person))
 		}
 	}
+
 	return out, resp.NextPageToken, nil
 }
 
@@ -150,6 +160,7 @@ func (p *peopleClient) Get(ctx context.Context, resourceName string) (contacts.C
 	if err != nil {
 		return contacts.Contact{}, err
 	}
+
 	return contacts.FromPerson(person), nil
 }
 
@@ -161,6 +172,7 @@ func (p *peopleClient) Create(ctx context.Context, c contacts.Contact) (contacts
 	if err != nil {
 		return contacts.Contact{}, mapError(opCreate, err)
 	}
+
 	return contacts.FromPerson(person), nil
 }
 
@@ -170,12 +182,15 @@ func (p *peopleClient) Update(ctx context.Context, c contacts.Contact, fields []
 	if c.Etag == "" {
 		return contacts.Contact{}, errors.New("people update: missing etag")
 	}
+
 	if len(fields) == 0 {
 		fields = c.UpdateFields()
 	}
+
 	if len(fields) == 0 {
 		return contacts.Contact{}, errors.New("people update: no field to update")
 	}
+
 	person, err := authed(ctx, p, opUpdate, func() (*people.Person, error) {
 		return p.svc.People.UpdateContact(c.ResourceName, c.ToPerson()).
 			UpdatePersonFields(strings.Join(fields, ",")).PersonFields(personFields).Context(ctx).Do()
@@ -183,6 +198,7 @@ func (p *peopleClient) Update(ctx context.Context, c contacts.Contact, fields []
 	if err != nil {
 		return contacts.Contact{}, mapError(opUpdate, err)
 	}
+
 	return contacts.FromPerson(person), nil
 }
 
@@ -191,32 +207,39 @@ func (p *peopleClient) Delete(ctx context.Context, resourceName string) error {
 	_, err := authed(ctx, p, opDelete, func() (*people.Empty, error) {
 		return p.svc.People.DeleteContact(resourceName).Context(ctx).Do()
 	})
+
 	return mapError(opDelete, err)
 }
 
 // ListGroups returns every user and system contact group.
 func (p *peopleClient) ListGroups(ctx context.Context) ([]contacts.Group, error) {
 	var out []contacts.Group
+
 	pageToken := ""
+
 	for {
 		resp, err := retryRead(ctx, p, opListGroups, func() (*people.ListContactGroupsResponse, error) {
 			call := p.svc.ContactGroups.List().GroupFields(groupFields).PageSize(maxGroupPageSize).Context(ctx)
 			if pageToken != "" {
 				call = call.PageToken(pageToken)
 			}
+
 			return call.Do()
 		})
 		if err != nil {
 			return nil, err
 		}
+
 		for _, g := range resp.ContactGroups {
 			if g != nil {
 				out = append(out, fromGroup(g))
 			}
 		}
+
 		if resp.NextPageToken == "" {
 			return out, nil
 		}
+
 		pageToken = resp.NextPageToken
 	}
 }
@@ -232,6 +255,7 @@ func (p *peopleClient) CreateGroup(ctx context.Context, name string) (contacts.G
 	if err != nil {
 		return contacts.Group{}, mapError(opCreateGroup, err)
 	}
+
 	return fromGroup(g), nil
 }
 
@@ -243,6 +267,7 @@ func (p *peopleClient) ModifyMembers(ctx context.Context, group string, add, rem
 	if err != nil {
 		return err
 	}
+
 	resp, err := authed(ctx, p, opModifyMembers, func() (*people.ModifyContactGroupMembersResponse, error) {
 		return p.svc.ContactGroups.Members.Modify(resourceName, &people.ModifyContactGroupMembersRequest{
 			ResourceNamesToAdd:    add,
@@ -252,9 +277,11 @@ func (p *peopleClient) ModifyMembers(ctx context.Context, group string, add, rem
 	if err != nil {
 		return mapError(opModifyMembers, err)
 	}
+
 	if len(resp.NotFoundResourceNames) > 0 {
 		return fmt.Errorf("%w: %s", contacts.ErrNotFound, strings.Join(resp.NotFoundResourceNames, ", "))
 	}
+
 	return nil
 }
 
@@ -270,6 +297,7 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 	if name == "" {
 		name = g.Name
 	}
+
 	typ := strings.ToLower(g.GroupType)
 	switch g.GroupType {
 	case googleGroupUser:
@@ -277,6 +305,7 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 	case googleGroupSystem:
 		typ = contacts.GroupTypeSystem
 	}
+
 	return contacts.Group{ResourceName: g.ResourceName, Name: name, Type: typ, MemberCount: int(g.MemberCount)}
 }
 
@@ -284,14 +313,17 @@ func fromGroup(g *people.ContactGroup) contacts.Group {
 // Each attempt is observed separately.
 func retryRead[T any](ctx context.Context, p *peopleClient, op string, call func() (T, error)) (T, error) {
 	v, err := authed(ctx, p, op, call)
+
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) && gerr.Code >= http.StatusInternalServerError && ctx.Err() == nil {
 		v, err = authed(ctx, p, op, call)
 	}
+
 	if err != nil {
 		var zero T
 		return zero, mapError(op, err)
 	}
+
 	return v, nil
 }
 
@@ -306,10 +338,12 @@ func authed[T any](ctx context.Context, p *peopleClient, op string, call func() 
 	if callStatus(err) != http.StatusUnauthorized || p.tokens == nil || ctx.Err() != nil {
 		return v, err
 	}
+
 	if ferr := p.tokens.forceRefresh(); ferr != nil {
 		var zero T
 		return zero, ferr
 	}
+
 	return observe(ctx, p, op, call)
 }
 
@@ -317,10 +351,12 @@ func authed[T any](ctx context.Context, p *peopleClient, op string, call func() 
 // duration to p.onCall.
 func observe[T any](ctx context.Context, p *peopleClient, method string, call func() (T, error)) (T, error) {
 	start := time.Now()
+
 	v, err := call()
 	if p.onCall != nil {
 		p.onCall(ctx, method, callStatus(err), time.Since(start))
 	}
+
 	return v, err
 }
 
@@ -332,10 +368,12 @@ func callStatus(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
+
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) {
 		return gerr.Code
 	}
+
 	return statusNoResponse
 }
 
@@ -346,9 +384,11 @@ func mapError(op string, err error) error {
 	if err == nil {
 		return nil
 	}
+
 	if errors.Is(err, contacts.ErrUpstreamAuth) {
 		return contacts.ErrUpstreamAuth
 	}
+
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) {
 		switch {
@@ -363,18 +403,23 @@ func mapError(op string, err error) error {
 		case gerr.Code == http.StatusBadRequest:
 			return fmt.Errorf("people %s: google returned HTTP %d: %w", op, gerr.Code, contacts.ErrInvalidArgument)
 		}
+
 		return contacts.UpstreamStatusError{Op: op, Status: gerr.Code}
 	}
+
 	if errors.Is(err, context.Canceled) {
 		return fmt.Errorf("people %s: %w", op, context.Canceled)
 	}
+
 	if cause := transportCause(err); cause != nil {
 		return contacts.UnreachableError{Op: op, Err: cause}
 	}
+
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		return fmt.Errorf("people %s: %w", op, uerr.Err)
 	}
+
 	return fmt.Errorf("people %s: %w", op, err)
 }
 
@@ -386,9 +431,11 @@ var errNoAnswer = errors.New("no answer before the connection closed or timed ou
 // Google, or nil when err is something else. The result never wraps a
 // *url.Error, whose text holds the request URL.
 func transportCause(err error) error {
-	var dnsErr *net.DNSError
-	var opErr *net.OpError
-	var uerr *url.Error
+	var (
+		dnsErr *net.DNSError
+		opErr  *net.OpError
+		uerr   *url.Error
+	)
 	switch {
 	case errors.As(err, &dnsErr):
 		return dnsErr
@@ -399,6 +446,7 @@ func transportCause(err error) error {
 	case errors.As(err, &uerr) && (uerr.Timeout() || errors.Is(uerr.Err, io.EOF) || errors.Is(uerr.Err, io.ErrUnexpectedEOF)):
 		return errNoAnswer
 	}
+
 	return nil
 }
 
@@ -408,14 +456,17 @@ func retryAfter(h http.Header) time.Duration {
 	if v == "" {
 		return defaultRetryAfter
 	}
+
 	if s, err := strconv.Atoi(v); err == nil && s > 0 {
 		return time.Duration(s) * time.Second
 	}
+
 	if t, err := http.ParseTime(v); err == nil {
 		if d := time.Until(t); d > 0 {
 			return d
 		}
 	}
+
 	return defaultRetryAfter
 }
 
@@ -427,10 +478,12 @@ func isFailedPrecondition(gerr *googleapi.Error) bool {
 			return true
 		}
 	}
+
 	var body struct {
 		Error struct {
 			Status string `json:"status"`
 		} `json:"error"`
 	}
+
 	return json.Unmarshal([]byte(gerr.Body), &body) == nil && body.Error.Status == statusFailedPrecondition
 }

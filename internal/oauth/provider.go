@@ -112,14 +112,18 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	if cfg.BaseURL == nil {
 		return nil, errors.New("oauth: base URL is required")
 	}
+
 	if deps.Store == nil || deps.Clients == nil || deps.Upstream == nil || deps.Keyring == nil {
 		return nil, errors.New("oauth: store, clients, upstream and keyring are required")
 	}
+
 	issuer := strings.TrimSuffix(cfg.BaseURL.String(), "/")
+
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, err
 	}
+
 	s := &Server{
 		st:             deps.Store,
 		clients:        deps.Clients,
@@ -141,9 +145,11 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	if s.log == nil {
 		s.log = slog.Default()
 	}
+
 	if s.now == nil {
 		s.now = time.Now
 	}
+
 	if s.idTokens == nil {
 		ctx := oidc.ClientContext(context.Background(), &http.Client{Timeout: jwksFetchTimeout})
 		s.idTokens = oidc.NewVerifier(googleIssuer, oidc.NewRemoteKeySet(ctx, googleJWKSURL),
@@ -176,6 +182,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		compose.OAuth2TokenIntrospectionFactory,
 		compose.OAuth2PKCEFactory,
 	)
+
 	return s, nil
 }
 
@@ -193,6 +200,7 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+pathCallback, s.callback)
 	mux.HandleFunc("POST "+pathToken, s.token)
 	mux.HandleFunc("POST "+pathRevoke, s.revoke)
+
 	if s.enableDCR {
 		mux.Handle(pathRegister, s.clients.RegisterHandler())
 	}
@@ -217,22 +225,29 @@ func (s *Server) Verifier() auth.TokenVerifier {
 			// cause tells them apart. A 401 here would make every client re-run
 			// OAuth during a database hiccup.
 			s.log.ErrorContext(ctx, "oauth: introspect access token", slog.Any("error", fosite.ErrorToRFC6749Error(err).Cause()))
+
 			return nil, errVerifierUnavailable
 		}
+
 		if use != fosite.AccessToken {
 			return nil, fmt.Errorf("%w: not an access token", auth.ErrInvalidToken)
 		}
+
 		if !slices.Contains(ar.GetGrantedAudience(), s.resource) {
 			return nil, fmt.Errorf("%w: token audience is not %s", auth.ErrInvalidToken, s.resource)
 		}
+
 		if !slices.Contains(ar.GetGrantedScopes(), MCPScope) {
 			return nil, fmt.Errorf("%w: token lacks scope %s", auth.ErrInvalidToken, MCPScope)
 		}
+
 		sess := ar.GetSession()
+
 		uid := sess.GetSubject()
 		if uid == "" {
 			return nil, fmt.Errorf("%w: token has no subject", auth.ErrInvalidToken)
 		}
+
 		return &auth.TokenInfo{
 			Scopes:     ar.GetGrantedScopes(),
 			Expiration: sess.GetExpiresAt(fosite.AccessToken),
@@ -262,6 +277,7 @@ func isInvalidTokenError(err error) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -272,7 +288,9 @@ func UserID(ctx context.Context) (string, bool) {
 	if ti == nil {
 		return "", false
 	}
+
 	uid, ok := ti.Extra[uidKey].(string)
+
 	return uid, ok && uid != ""
 }
 
@@ -296,10 +314,12 @@ func (f *fositeStorage) GetClient(ctx context.Context, id string) (fosite.Client
 	if err != nil {
 		return nil, err
 	}
+
 	pc := &providerClient{Client: c, audience: f.audience}
 	if a, ok := ctx.Value(approvedRedirectKey{}).(approvedRedirect); ok && a.clientID == id {
 		pc.approvedRedirect = a.uri
 	}
+
 	return pc, nil
 }
 
@@ -323,6 +343,7 @@ func (c *providerClient) GetRedirectURIs() []string {
 	if c.approvedRedirect == "" || slices.Contains(uris, c.approvedRedirect) {
 		return uris
 	}
+
 	return append(slices.Clip(uris), c.approvedRedirect)
 }
 
@@ -331,6 +352,7 @@ func (c *providerClient) name() string {
 	if oc, ok := c.Client.(*store.OAuthClient); ok {
 		return oc.Name
 	}
+
 	return ""
 }
 
@@ -340,5 +362,6 @@ func randomToken() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("oauth: read random: %w", err)
 	}
+
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }

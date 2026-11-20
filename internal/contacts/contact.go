@@ -103,47 +103,57 @@ func FromPerson(p *people.Person) Contact {
 	if p == nil {
 		return Contact{}
 	}
+
 	c := Contact{ResourceName: p.ResourceName, Etag: p.Etag, raw: clonePerson(p)}
 	// updateContact checks the CONTACT source etag, which differs from the
 	// person etag for contacts linked to a Google profile.
 	if src := contactSource(p); src != nil && src.Etag != "" {
 		c.Etag = src.Etag
 	}
+
 	if n := preferContact(p.Names, nameMeta); n != nil {
 		c.GivenName, c.FamilyName, c.DisplayName = n.GivenName, n.FamilyName, n.DisplayName
 	}
+
 	if o := preferContact(p.Organizations, orgMeta); o != nil {
 		c.Company, c.JobTitle = o.Name, o.Title
 	}
+
 	if b := preferContact(p.Biographies, bioMeta); b != nil {
 		c.Notes = b.Value
 	}
-	for _, e := range p.EmailAddresses {
-		if e != nil {
-			c.Emails = append(c.Emails, Typed{Value: e.Value, Type: e.Type})
-		}
-	}
-	for _, ph := range p.PhoneNumbers {
-		if ph != nil {
-			c.Phones = append(c.Phones, Typed{Value: ph.Value, Type: ph.Type})
-		}
-	}
-	for _, u := range p.Urls {
-		if u != nil {
-			c.Websites = append(c.Websites, Typed{Value: u.Value, Type: u.Type})
-		}
-	}
+
+	c.Emails = typedValues(p.EmailAddresses, func(e *people.EmailAddress) Typed { return Typed{Value: e.Value, Type: e.Type} })
+	c.Phones = typedValues(p.PhoneNumbers, func(e *people.PhoneNumber) Typed { return Typed{Value: e.Value, Type: e.Type} })
+	c.Websites = typedValues(p.Urls, func(e *people.Url) Typed { return Typed{Value: e.Value, Type: e.Type} })
+
 	for _, a := range p.Addresses {
 		if a != nil {
 			c.Addresses = append(c.Addresses, fromAddress(a))
 		}
 	}
+
 	for _, m := range p.Memberships {
 		if g := membershipGroup(m); g != "" {
 			c.Groups = append(c.Groups, g)
 		}
 	}
+
 	return c
+}
+
+// typedValues maps every non-nil entry to a Typed, or returns nil when there
+// is none.
+func typedValues[E any](entries []*E, toTyped func(*E) Typed) []Typed {
+	var out []Typed
+
+	for _, e := range entries {
+		if e != nil {
+			out = append(out, toTyped(e))
+		}
+	}
+
+	return out
 }
 
 // ToPerson maps a Contact to a People API person for create or update.
@@ -162,61 +172,27 @@ func (c Contact) ToPerson() *people.Person {
 	if p == nil {
 		p = &people.Person{Etag: c.Etag}
 	}
+
 	p.ResourceName = c.ResourceName
 	p.Metadata = c.sourceMetadata()
 
-	var profileName *people.Name
-	p.Names, profileName = splitOwned(p.Names, nameMeta)
-	if c.GivenName != "" || c.FamilyName != "" || len(p.Names) > 0 {
-		if len(p.Names) > 0 || profileName == nil ||
-			profileName.GivenName != c.GivenName || profileName.FamilyName != c.FamilyName {
-			n := pickOrNew(&p.Names, nameMeta)
-			// UnstructuredName is derived from the structured parts but may win
-			// over them on write, so a stale one would undo a rename.
-			if n.GivenName != c.GivenName || n.FamilyName != c.FamilyName {
-				n.UnstructuredName = ""
-			}
-			n.GivenName, n.FamilyName = c.GivenName, c.FamilyName
-		}
-	}
-	var profileOrg *people.Organization
-	p.Organizations, profileOrg = splitOwned(p.Organizations, orgMeta)
-	if c.Company != "" || c.JobTitle != "" || len(p.Organizations) > 0 {
-		if len(p.Organizations) > 0 || profileOrg == nil ||
-			profileOrg.Name != c.Company || profileOrg.Title != c.JobTitle {
-			o := pickOrNew(&p.Organizations, orgMeta)
-			o.Name, o.Title = c.Company, c.JobTitle
-		}
-	}
-	var profileBio *people.Biography
-	p.Biographies, profileBio = splitOwned(p.Biographies, bioMeta)
-	if c.Notes != "" || len(p.Biographies) > 0 {
-		if len(p.Biographies) > 0 || profileBio == nil || profileBio.Value != c.Notes {
-			pickOrNew(&p.Biographies, bioMeta).Value = c.Notes
-		}
-	}
+	c.overlayName(p)
+	c.overlayOrganization(p)
+	c.overlayBiography(p)
 
-	emails, foreignEmails := splitForeign(p.EmailAddresses, emailMeta)
-	p.EmailAddresses = overlay(emails, c.Emails, foreignKeys(foreignEmails,
-		func(e *people.EmailAddress) string { return emailKey(Typed{Value: e.Value}) }), typedOverlay(
-		func(e *people.EmailAddress) Typed { return Typed{Value: e.Value, Type: e.Type} },
-		func(t Typed) *people.EmailAddress { return &people.EmailAddress{Value: t.Value, Type: t.Type} },
-		func(e *people.EmailAddress, typ string) { e.Type = typ },
+	p.EmailAddresses = overlayTyped(p.EmailAddresses, emailMeta, c.Emails, newTypedEntry(
+		func(e *people.EmailAddress) (string, string) { return e.Value, e.Type },
+		func(e *people.EmailAddress, v, t string) { e.Value, e.Type = v, t },
 		emailKey))
-	phones, foreignPhones := splitForeign(p.PhoneNumbers, phoneMeta)
-	p.PhoneNumbers = overlay(phones, c.Phones, foreignKeys(foreignPhones,
-		func(e *people.PhoneNumber) string { return phoneKey(Typed{Value: e.Value}) }), typedOverlay(
-		func(e *people.PhoneNumber) Typed { return Typed{Value: e.Value, Type: e.Type} },
-		func(t Typed) *people.PhoneNumber { return &people.PhoneNumber{Value: t.Value, Type: t.Type} },
-		func(e *people.PhoneNumber, typ string) { e.Type = typ },
+	p.PhoneNumbers = overlayTyped(p.PhoneNumbers, phoneMeta, c.Phones, newTypedEntry(
+		func(e *people.PhoneNumber) (string, string) { return e.Value, e.Type },
+		func(e *people.PhoneNumber, v, t string) { e.Value, e.Type = v, t },
 		phoneKey))
-	urls, foreignURLs := splitForeign(p.Urls, urlMeta)
-	p.Urls = overlay(urls, c.Websites, foreignKeys(foreignURLs,
-		func(e *people.Url) string { return websiteKey(Typed{Value: e.Value}) }), typedOverlay(
-		func(e *people.Url) Typed { return Typed{Value: e.Value, Type: e.Type} },
-		func(t Typed) *people.Url { return &people.Url{Value: t.Value, Type: t.Type} },
-		func(e *people.Url, typ string) { e.Type = typ },
+	p.Urls = overlayTyped(p.Urls, urlMeta, c.Websites, newTypedEntry(
+		func(e *people.Url) (string, string) { return e.Value, e.Type },
+		func(e *people.Url, v, t string) { e.Value, e.Type = v, t },
 		websiteKey))
+
 	addrs, foreignAddrs := splitForeign(p.Addresses, addressMeta)
 	p.Addresses = overlay(addrs, c.Addresses, foreignKeys(foreignAddrs,
 		func(e *people.Address) string { return addressKey(fromAddress(e)) }), overlayFuncs[*people.Address, Address]{
@@ -225,11 +201,117 @@ func (c Contact) ToPerson() *people.Person {
 		create:  toAddress,
 		setType: func(e *people.Address, a Address) { e.Type = a.Type },
 	})
+
 	p.Memberships = c.memberships(p.Memberships)
 	if c.raw == nil {
 		p.Memberships = withMyContacts(p.Memberships)
 	}
+
 	return p
+}
+
+// overlayName applies the Contact's given and family names to p.Names. An
+// entry owned by the profile is never copied into the contact.
+func (c Contact) overlayName(p *people.Person) {
+	var profileName *people.Name
+
+	p.Names, profileName = splitOwned(p.Names, nameMeta)
+	if c.GivenName == "" && c.FamilyName == "" && len(p.Names) == 0 {
+		return
+	}
+
+	if len(p.Names) == 0 && profileName != nil &&
+		profileName.GivenName == c.GivenName && profileName.FamilyName == c.FamilyName {
+		return
+	}
+
+	n := pickOrNew(&p.Names, nameMeta)
+	// UnstructuredName is derived from the structured parts but may win
+	// over them on write, so a stale one would undo a rename.
+	if n.GivenName != c.GivenName || n.FamilyName != c.FamilyName {
+		n.UnstructuredName = ""
+	}
+
+	n.GivenName, n.FamilyName = c.GivenName, c.FamilyName
+}
+
+// overlayOrganization applies the Contact's company and job title to
+// p.Organizations, leaving profile-owned entries out.
+func (c Contact) overlayOrganization(p *people.Person) {
+	var profileOrg *people.Organization
+
+	p.Organizations, profileOrg = splitOwned(p.Organizations, orgMeta)
+	if c.Company == "" && c.JobTitle == "" && len(p.Organizations) == 0 {
+		return
+	}
+
+	if len(p.Organizations) == 0 && profileOrg != nil &&
+		profileOrg.Name == c.Company && profileOrg.Title == c.JobTitle {
+		return
+	}
+
+	o := pickOrNew(&p.Organizations, orgMeta)
+	o.Name, o.Title = c.Company, c.JobTitle
+}
+
+// overlayBiography applies the Contact's notes to p.Biographies, leaving
+// profile-owned entries out.
+func (c Contact) overlayBiography(p *people.Person) {
+	var profileBio *people.Biography
+
+	p.Biographies, profileBio = splitOwned(p.Biographies, bioMeta)
+	if c.Notes == "" && len(p.Biographies) == 0 {
+		return
+	}
+
+	if len(p.Biographies) == 0 && profileBio != nil && profileBio.Value == c.Notes {
+		return
+	}
+
+	pickOrNew(&p.Biographies, bioMeta).Value = c.Notes
+}
+
+// typedEntry adapts one People API entry type E, whose value is a Typed, to
+// the overlay machinery.
+type typedEntry[E any] struct {
+	toTyped func(*E) Typed
+	create  func(Typed) *E
+	setType func(*E, string)
+	key     func(Typed) string // key of a Typed value, same normalization for raw entries
+}
+
+// newTypedEntry builds the adapter of an entry type E from its value/type
+// getter and setter. setType rewrites the type and keeps the value.
+func newTypedEntry[E any](get func(*E) (value, typ string), set func(e *E, value, typ string), key func(Typed) string) typedEntry[E] {
+	return typedEntry[E]{
+		toTyped: func(e *E) Typed {
+			v, t := get(e)
+
+			return Typed{Value: v, Type: t}
+		},
+		create: func(t Typed) *E {
+			e := new(E)
+			set(e, t.Value, t.Type)
+
+			return e
+		},
+		setType: func(e *E, typ string) {
+			v, _ := get(e)
+			set(e, v, typ)
+		},
+		key: key,
+	}
+}
+
+// overlayTyped overlays values on the contact-owned entries of raw. Profile
+// entries (foreign) are not sent; a value matching only one of them, by value
+// alone, is skipped.
+func overlayTyped[E any](raw []*E, meta func(*E) *people.FieldMetadata, values []Typed, f typedEntry[E]) []*E {
+	owned, foreign := splitForeign(raw, meta)
+
+	return overlay(owned, values,
+		foreignKeys(foreign, func(e *E) string { return f.key(Typed{Value: f.toTyped(e).Value}) }),
+		typedOverlay(f.toTyped, f.create, f.setType, f.key))
 }
 
 // withMyContacts puts a myContacts membership first unless ms already has one.
@@ -239,7 +321,9 @@ func withMyContacts(ms []*people.Membership) []*people.Membership {
 			return ms
 		}
 	}
+
 	mine := &people.Membership{ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: myContactsGroup}}
+
 	return append([]*people.Membership{mine}, ms...)
 }
 
@@ -250,10 +334,12 @@ func (c Contact) sourceMetadata() *people.PersonMetadata {
 	if raw := contactSource(c.raw); raw != nil {
 		src.Id = raw.Id
 	}
+
 	src.Etag = c.Etag
 	if src.Etag == "" {
 		return nil
 	}
+
 	return &people.PersonMetadata{Sources: []*people.Source{src}}
 }
 
@@ -261,12 +347,15 @@ func (c Contact) sourceMetadata() *people.PersonMetadata {
 // manages, and makes user-group memberships follow c.Groups.
 func (c Contact) memberships(raw []*people.Membership) []*people.Membership {
 	var out []*people.Membership
+
 	present := map[string]bool{}
 	userEntries := map[string]*people.Membership{}
+
 	for _, m := range raw {
 		if m == nil {
 			continue
 		}
+
 		g := membershipGroup(m)
 		switch {
 		case g == "" || isSystemGroup(g):
@@ -276,19 +365,24 @@ func (c Contact) memberships(raw []*people.Membership) []*people.Membership {
 			userEntries[g] = m
 		}
 	}
+
 	for _, g := range c.Groups {
 		if g == "" || present[g] {
 			continue
 		}
+
 		present[g] = true
+
 		m := userEntries[g]
 		if m == nil {
 			m = &people.Membership{
 				ContactGroupMembership: &people.ContactGroupMembership{ContactGroupResourceName: g},
 			}
 		}
+
 		out = append(out, m)
 	}
+
 	return out
 }
 
@@ -296,6 +390,7 @@ func (c Contact) memberships(raw []*people.Membership) []*people.Membership {
 // field of c, suitable for updatePersonFields.
 func (c Contact) UpdateFields() []string {
 	var fields []string
+
 	add := func(cond bool, name string) {
 		if cond {
 			fields = append(fields, name)
@@ -310,6 +405,7 @@ func (c Contact) UpdateFields() []string {
 	add(len(c.Addresses) > 0, FieldAddresses)
 	add(len(c.Groups) > 0, FieldMemberships)
 	slices.Sort(fields)
+
 	return fields
 }
 
@@ -337,28 +433,37 @@ func typedOverlay[E any](toTyped func(E) Typed, create func(Typed) E, setType fu
 // entries; raw entries matching no value are dropped. raw entries must already
 // be private copies, since they are modified in place.
 func overlay[E comparable, V any](raw []E, values []V, foreign map[string]bool, f overlayFuncs[E, V]) []E {
-	var zero E
-	var out []E
+	var (
+		zero E
+		out  []E
+	)
+
 	used := make([]bool, len(raw))
+
 	for _, v := range values {
 		k := f.valKey(v)
 		idx := -1
+
 		for i, e := range raw {
 			if k != "" && !used[i] && e != zero && f.key(e) == k {
 				idx = i
 				break
 			}
 		}
+
 		if idx < 0 {
 			if !foreign[k] {
 				out = append(out, f.create(v))
 			}
+
 			continue
 		}
+
 		used[idx] = true
 		f.setType(raw[idx], v)
 		out = append(out, raw[idx])
 	}
+
 	return out
 }
 
@@ -387,17 +492,21 @@ func isOwned(m *people.FieldMetadata) bool {
 // of the first non-nil entry, else -1.
 func pickIndex[E any](list []*E, meta func(*E) *people.FieldMetadata) int {
 	first := -1
+
 	for i, e := range list {
 		if e == nil {
 			continue
 		}
+
 		if isContactSource(meta(e)) {
 			return i
 		}
+
 		if first < 0 {
 			first = i
 		}
 	}
+
 	return first
 }
 
@@ -406,6 +515,7 @@ func preferContact[E any](list []*E, meta func(*E) *people.FieldMetadata) *E {
 	if i := pickIndex(list, meta); i >= 0 {
 		return list[i]
 	}
+
 	return nil
 }
 
@@ -415,8 +525,10 @@ func pickOrNew[E any](list *[]*E, meta func(*E) *people.FieldMetadata) *E {
 	if i := pickIndex(*list, meta); i >= 0 {
 		return (*list)[i]
 	}
+
 	e := new(E)
 	*list = append([]*E{e}, *list...)
+
 	return e
 }
 
@@ -428,6 +540,7 @@ func splitOwned[E any](list []*E, meta func(*E) *people.FieldMetadata) ([]*E, *E
 	if len(foreign) > 0 {
 		return owned, foreign[0]
 	}
+
 	return owned, nil
 }
 
@@ -436,13 +549,16 @@ func splitForeign[E any](list []*E, meta func(*E) *people.FieldMetadata) (owned,
 	if list == nil {
 		return nil, nil
 	}
+
 	for _, e := range list {
 		if e != nil && !isOwned(meta(e)) {
 			foreign = append(foreign, e)
 			continue
 		}
+
 		owned = append(owned, e)
 	}
+
 	return owned, foreign
 }
 
@@ -451,12 +567,14 @@ func foreignKeys[E any](foreign []*E, key func(*E) string) map[string]bool {
 	if len(foreign) == 0 {
 		return nil
 	}
+
 	out := make(map[string]bool, len(foreign))
 	for _, e := range foreign {
 		if k := key(e); k != "" {
 			out[k] = true
 		}
 	}
+
 	return out
 }
 
@@ -490,6 +608,7 @@ func membershipGroup(m *people.Membership) string {
 	if m == nil || m.ContactGroupMembership == nil {
 		return ""
 	}
+
 	return m.ContactGroupMembership.ContactGroupResourceName
 }
 
@@ -503,11 +622,13 @@ func contactSource(p *people.Person) *people.Source {
 	if p == nil || p.Metadata == nil {
 		return nil
 	}
+
 	for _, s := range p.Metadata.Sources {
 		if s != nil && s.Type == sourceTypeContact {
 			return s
 		}
 	}
+
 	return nil
 }
 
@@ -519,6 +640,7 @@ func clonePerson(p *people.Person) *people.Person {
 	if p == nil {
 		return nil
 	}
+
 	cp := *p
 	cp.Names = cloneEntries(p.Names)
 	cp.Organizations = cloneEntries(p.Organizations)
@@ -527,12 +649,14 @@ func clonePerson(p *people.Person) *people.Person {
 	cp.PhoneNumbers = cloneEntries(p.PhoneNumbers)
 	cp.Urls = cloneEntries(p.Urls)
 	cp.Addresses = cloneEntries(p.Addresses)
+
 	cp.Memberships = cloneEntries(p.Memberships)
 	if p.Metadata != nil {
 		md := *p.Metadata
 		md.Sources = cloneEntries(p.Metadata.Sources)
 		cp.Metadata = &md
 	}
+
 	return &cp
 }
 
@@ -540,6 +664,7 @@ func cloneEntries[E any](list []*E) []*E {
 	if list == nil {
 		return nil
 	}
+
 	out := make([]*E, len(list))
 	for i, e := range list {
 		if e != nil {
@@ -547,5 +672,6 @@ func cloneEntries[E any](list []*E) []*E {
 			out[i] = &v
 		}
 	}
+
 	return out
 }

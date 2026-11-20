@@ -45,15 +45,16 @@ func (s *Server) asMetadata() asMetadata {
 		GrantTypesSupported:               supportedGrantTypes,
 		CodeChallengeMethodsSupported:     []string{pkceMethodS256},
 		TokenEndpointAuthMethodsSupported: []string{authMethodNone},
+		ScopesSupported:                   []string{MCPScope},
 		// RFC 8414 defaults this to client_secret_basic, which public clients lack.
 		RevocationEndpointAuthMethodsSupported:     []string{authMethodNone},
 		ClientIDMetadataDocumentSupported:          true,
 		AuthorizationResponseIssParameterSupported: true,
-		ScopesSupported: []string{MCPScope},
 	}
 	if s.enableDCR {
 		m.RegistrationEndpoint = s.issuer + pathRegister
 	}
+
 	return m
 }
 
@@ -61,6 +62,7 @@ func (s *Server) serveASMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mediaTypeJSON)
 	w.Header().Set("Cache-Control", cacheControlNoStore)
 	w.Header().Set("Access-Control-Allow-Origin", corsAnyOrigin)
+
 	if err := json.NewEncoder(w).Encode(s.asMetadata()); err != nil {
 		s.log.DebugContext(r.Context(), "oauth: write metadata", "error", err)
 	}
@@ -74,6 +76,7 @@ func (s *Server) resourceMetadataHandler() http.Handler {
 		ScopesSupported:        []string{MCPScope},
 		BearerMethodsSupported: []string{bearerMethodHeader},
 	})
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", cacheControlNoStore)
 		h.ServeHTTP(w, r)

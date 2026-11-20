@@ -30,18 +30,23 @@ func ResolveGroup(ctx context.Context, l GroupLister, group string) (string, err
 	if IsGroupResourceName(group) {
 		return group, nil
 	}
+
 	groups, err := l.ListGroups(ctx)
 	if err != nil {
 		return "", err
 	}
+
 	var matches []string
+
 	for _, g := range groups {
 		if g.Type == GroupTypeUser && strings.EqualFold(g.Name, group) {
 			matches = append(matches, g.ResourceName)
 		}
 	}
+
 	if len(matches) != 1 {
 		return "", GroupError{Group: group, Matches: len(matches)}
 	}
+
 	return matches[0], nil
 }

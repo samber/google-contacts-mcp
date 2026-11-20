@@ -83,21 +83,27 @@ func Open(ctx context.Context, path string, kr *crypto.Keyring) (*Store, error) 
 	if kr == nil {
 		return nil, errors.New("store: nil keyring")
 	}
+
 	if strings.Contains(path, dsnQuerySep) {
 		return nil, fmt.Errorf("store: db path %q must not contain %q", path, dsnQuerySep)
 	}
+
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return nil, fmt.Errorf("store: create db dir: %w", err)
 	}
+
 	db, err := sql.Open(driverName, path+dsnPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
+
 	db.SetMaxOpenConns(maxOpenConns)
+
 	s := &Store{db: db, kr: kr, now: time.Now, pendingTouches: make(map[string]time.Time)}
 	if err := s.init(ctx, path); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
+
 	return s, nil
 }
 
@@ -105,9 +111,11 @@ func (s *Store) init(ctx context.Context, path string) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("store: open %s: %w", path, err)
 	}
+
 	if err := os.Chmod(path, fileMode); err != nil {
 		return fmt.Errorf("store: chmod db: %w", err)
 	}
+
 	return s.migrate(ctx)
 }
 
@@ -116,6 +124,7 @@ func (s *Store) init(ctx context.Context, path string) error {
 func (s *Store) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), closeFlushTimeout)
 	defer cancel()
+
 	return errors.Join(s.FlushTouches(ctx), s.db.Close())
 }
 
@@ -128,22 +137,27 @@ func (s *Store) migrate(ctx context.Context) error {
 	) STRICT`); err != nil {
 		return fmt.Errorf("store: create schema_migrations: %w", err)
 	}
+
 	entries, err := fs.ReadDir(migrationsFS, migrationsDir)
 	if err != nil {
 		return fmt.Errorf("store: list migrations: %w", err)
 	}
+
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), migrationExt) {
 			names = append(names, e.Name())
 		}
 	}
+
 	sort.Strings(names)
+
 	for _, name := range names {
 		if err := s.applyMigration(ctx, name); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -157,27 +171,34 @@ func (s *Store) applyMigration(ctx context.Context, name string) (err error) {
 			err = errors.Join(err, tx.Rollback())
 		}
 	}()
+
 	var n int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT count(*) FROM schema_migrations WHERE version = ?`, name).Scan(&n); err != nil {
 		return fmt.Errorf("store: migration %s: check: %w", name, err)
 	}
+
 	if n > 0 {
 		return tx.Rollback()
 	}
+
 	body, err := migrationsFS.ReadFile(migrationsDir + "/" + name)
 	if err != nil {
 		return fmt.Errorf("store: migration %s: read: %w", name, err)
 	}
+
 	if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 		return fmt.Errorf("store: migration %s: %w", name, err)
 	}
+
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, s.now().Unix()); err != nil {
 		return fmt.Errorf("store: migration %s: record: %w", name, err)
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: migration %s: commit: %w", name, err)
 	}
+
 	return nil
 }

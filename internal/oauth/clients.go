@@ -99,16 +99,20 @@ func (r *ClientResolver) GetClient(ctx context.Context, id string) (fosite.Clien
 	if strings.HasPrefix(id, cimdIDPrefix) {
 		return r.cimdClient(ctx, id)
 	}
+
 	c, err := r.st.ClientByID(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fosite.ErrNotFound
 	}
+
 	if err != nil {
 		return nil, err
 	}
+
 	if c.Kind != store.ClientKindDCR {
 		return nil, fosite.ErrNotFound
 	}
+
 	return c, nil
 }
 
@@ -132,22 +136,27 @@ func (r *ClientResolver) cimdClient(ctx context.Context, id string) (fosite.Clie
 		if ok, _ := r.cimdLimit.take(r.now()); !ok {
 			return nil, ErrClientRateLimited
 		}
+
 		c, _, ferr := r.f.Fetch(context.WithoutCancel(ctx), id)
 		if ferr != nil {
 			return nil, ferr
 		}
+
 		if serr := r.st.SaveClient(context.WithoutCancel(ctx), c); serr != nil {
 			return nil, serr
 		}
+
 		return c, nil
 	})
 	if err != nil {
 		return r.afterFetchFailure(ctx, id, cached, err)
 	}
+
 	c, ok := v.(*store.OAuthClient)
 	if !ok {
 		return nil, fmt.Errorf("oauth: resolve client %q: unexpected %T", id, v)
 	}
+
 	return c, nil
 }
 
@@ -164,16 +173,21 @@ func (r *ClientResolver) afterFetchFailure(ctx context.Context, id string, cache
 				r.log.ErrorContext(ctx, "oauth: delete withdrawn client metadata",
 					slog.String("client_id", id), slog.Any("error", derr))
 			}
+
 			r.log.InfoContext(ctx, "oauth: client metadata withdrawn, cached copy deleted",
 				slog.String("client_id", id), slog.Int("status", se.status))
 		}
+
 		return nil, fmt.Errorf("oauth: resolve client %q: %w", id, err)
 	}
+
 	if cached != nil && r.now().Before(cached.ExpiresAt.Add(maxStaleness)) {
 		r.log.WarnContext(ctx, "serving stale client metadata after refetch failure",
 			slog.String("client_id", id), slog.Any("error", err))
+
 		return cached, nil
 	}
+
 	return nil, fmt.Errorf("oauth: resolve client %q: %w", id, err)
 }
 
@@ -184,20 +198,24 @@ func RedirectMatches(registered []string, got string) bool {
 	if slices.Contains(registered, got) {
 		return true
 	}
+
 	g, err := url.Parse(got)
 	if err != nil || !isLoopbackHost(g.Hostname()) || g.User != nil || g.Fragment != "" {
 		return false
 	}
+
 	for _, reg := range registered {
 		r, err := url.Parse(reg)
 		if err != nil || r.User != nil {
 			continue
 		}
+
 		if r.Scheme == g.Scheme && r.Hostname() == g.Hostname() &&
 			r.EscapedPath() == g.EscapedPath() && r.RawQuery == g.RawQuery {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -240,9 +258,12 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+
 		return
 	}
+
 	var in registrationRequest
+
 	dec := json.NewDecoder(http.MaxBytesReader(w, req.Body, maxRegistrationBody))
 	if err := dec.Decode(&in); err != nil {
 		var tooBig *http.MaxBytesError
@@ -250,19 +271,25 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 			r.writeError(w, req, errInvalidClientMetadata, "request body too large")
 			return
 		}
+
 		r.writeError(w, req, errInvalidClientMetadata, "request body is not a JSON object")
+
 		return
 	}
+
 	in.ClientName = strings.TrimSpace(in.ClientName)
 	if code, desc := validateRegistration(&in); code != "" {
 		r.writeError(w, req, code, desc)
 		return
 	}
+
 	if ok, retry := r.dcrLimit.take(r.now()); !ok {
 		r.log.WarnContext(req.Context(), "dcr: registration budget spent, refusing")
 		w.Header().Set(headerRetryAfter, retryAfterValue(retry))
 		r.writeJSON(w, req, http.StatusTooManyRequests, registrationError{
-			Error: errTemporarilyUnavailable, Description: "too many registrations, retry later"})
+			Error: errTemporarilyUnavailable, Description: "too many registrations, retry later",
+		})
+
 		return
 	}
 
@@ -270,8 +297,10 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 	if _, err := rand.Read(raw); err != nil {
 		r.log.ErrorContext(req.Context(), "dcr: generate client id", slog.Any("error", err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
 		return
 	}
+
 	name := in.ClientName
 	if name == "" {
 		// Validated above: the first redirect URI parses and has a host.
@@ -279,6 +308,7 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 			name = u.Hostname()
 		}
 	}
+
 	c := &store.OAuthClient{
 		ID:           hex.EncodeToString(raw),
 		Kind:         store.ClientKindDCR,
@@ -288,8 +318,10 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 	if err := r.st.SaveClient(req.Context(), c); err != nil {
 		r.log.ErrorContext(req.Context(), "dcr: save client", slog.Any("error", err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
 		return
 	}
+
 	r.log.InfoContext(req.Context(), "dcr: registered client",
 		slog.String("client_id", c.ID), slog.String("client_name", c.Name))
 
@@ -310,40 +342,55 @@ func validateRegistration(in *registrationRequest) (code, desc string) {
 	if in.TokenEndpointAuthMethod != "" && in.TokenEndpointAuthMethod != authMethodNone {
 		return errInvalidClientMetadata, "only public clients are supported: token_endpoint_auth_method must be \"none\""
 	}
+
 	if in.ApplicationType != "" && in.ApplicationType != applicationTypeWeb && in.ApplicationType != applicationTypeNative {
 		return errInvalidClientMetadata, "application_type must be \"web\" or \"native\""
 	}
+
 	for _, g := range in.GrantTypes {
 		if !slices.Contains(supportedGrantTypes, g) {
 			return errInvalidClientMetadata, fmt.Sprintf("unsupported grant_type %q", g)
 		}
 	}
+
 	for _, rt := range in.ResponseTypes {
 		if !slices.Contains(supportedResponseTypes, rt) {
 			return errInvalidClientMetadata, fmt.Sprintf("unsupported response_type %q", rt)
 		}
 	}
+
 	if utf8.RuneCountInString(in.ClientName) > maxClientNameRunes {
 		return errInvalidClientMetadata, fmt.Sprintf("client_name must be at most %d characters", maxClientNameRunes)
 	}
-	if len(in.RedirectURIs) == 0 {
+
+	return validateRedirectURIs(in.RedirectURIs)
+}
+
+// validateRedirectURIs applies the redirect_uris rules of validateRegistration.
+func validateRedirectURIs(uris []string) (code, desc string) {
+	if len(uris) == 0 {
 		return errInvalidRedirectURI, "redirect_uris is required"
 	}
-	if len(in.RedirectURIs) > maxRedirectURIs {
+
+	if len(uris) > maxRedirectURIs {
 		return errInvalidRedirectURI, fmt.Sprintf("at most %d redirect_uris are accepted", maxRedirectURIs)
 	}
-	for _, ru := range in.RedirectURIs {
+
+	for _, ru := range uris {
 		if len(ru) > maxRedirectURIBytes {
 			return errInvalidRedirectURI, fmt.Sprintf("each redirect_uri must be at most %d bytes", maxRedirectURIBytes)
 		}
+
 		u, err := url.Parse(ru)
 		if err != nil || !u.IsAbs() || u.Hostname() == "" || u.Fragment != "" || strings.Contains(ru, "#") {
 			return errInvalidRedirectURI, fmt.Sprintf("redirect_uri %q must be an absolute URI without fragment", ru)
 		}
+
 		if u.Scheme != schemeHTTPS && (u.Scheme != schemeHTTP || !isLoopbackHost(u.Hostname())) {
 			return errInvalidRedirectURI, fmt.Sprintf("redirect_uri %q must use https, or http on a loopback host", ru)
 		}
 	}
+
 	return "", ""
 }
 
@@ -357,6 +404,7 @@ func (r *ClientResolver) writeJSON(w http.ResponseWriter, req *http.Request, sta
 	w.Header().Set("Content-Type", mediaTypeJSON)
 	w.Header().Set("Cache-Control", cacheControlNoStore)
 	w.WriteHeader(status)
+
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		r.log.DebugContext(req.Context(), "dcr: write response", slog.Any("error", err))
 	}

@@ -30,28 +30,37 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// fosite sets no-store on success only; error bodies get it too.
 	w.Header().Set("Cache-Control", cacheControlNoStore)
+
 	fallback := fosite.NewAccessRequest(new(fosite.DefaultSession))
 	if !isForm(r) {
 		s.provider.WriteAccessError(ctx, w, fallback, errNotForm)
 		return
 	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+
 	ar, err := s.provider.NewAccessRequest(ctx, r, new(fosite.DefaultSession))
 	if err != nil {
 		s.logTokenError(ctx, r, err)
+
 		var req fosite.AccessRequester = fallback
 		if ar != nil {
 			req = ar
 		}
+
 		s.provider.WriteAccessError(ctx, w, req, err)
+
 		return
 	}
+
 	resp, err := s.provider.NewAccessResponse(ctx, ar)
 	if err != nil {
 		s.logTokenError(ctx, r, err)
 		s.provider.WriteAccessError(ctx, w, ar, err)
+
 		return
 	}
+
 	grant := r.PostForm.Get(paramGrantType)
 	s.log.InfoContext(ctx, "oauth: token issued",
 		slog.String("grant_type", grant), slog.String("client_id", ar.GetClient().GetID()))
@@ -60,6 +69,7 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	if grant == grantAuthorizationCode || grant == grantRefreshToken {
 		s.metrics.Grant(grant)
 	}
+
 	s.provider.WriteAccessResponse(ctx, w, ar, resp)
 }
 
@@ -67,12 +77,15 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 // which carries codes, verifiers and refresh tokens.
 func (s *Server) logTokenError(ctx context.Context, r *http.Request, err error) {
 	rfc := fosite.ErrorToRFC6749Error(err)
+
 	grant := r.PostForm.Get(paramGrantType)
 	if grant == grantRefreshToken && errors.Is(err, fosite.ErrInactiveToken) {
 		s.log.InfoContext(ctx, "oauth: refresh token reuse detected, token family revoked",
 			slog.String("client_id", r.PostForm.Get(paramClientID)))
+
 		return
 	}
+
 	s.log.InfoContext(ctx, "oauth: token request rejected",
 		slog.String("grant_type", grant), slog.String("error", rfc.ErrorField), slog.String("hint", rfc.HintField))
 }
@@ -85,13 +98,16 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		s.provider.WriteRevocationResponse(ctx, w, errNotForm)
 		return
 	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+
 	err := s.provider.NewRevocationRequest(ctx, r)
 	if err != nil {
 		rfc := fosite.ErrorToRFC6749Error(err)
 		s.log.InfoContext(ctx, "oauth: revocation request rejected",
 			slog.String("error", rfc.ErrorField), slog.String("hint", rfc.HintField))
 	}
+
 	s.provider.WriteRevocationResponse(ctx, w, err)
 }
 

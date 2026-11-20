@@ -105,6 +105,7 @@ func parseTemplates() (*template.Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("oauth: parse templates: %w", err)
 	}
+
 	return t, nil
 }
 
@@ -133,23 +134,35 @@ type page struct {
 }
 
 var (
-	pageExpired = &page{status: http.StatusBadRequest, Title: "Sign-in expired",
-		Message: "This sign-in request expired or was already used. Start again from your assistant."}
-	pageBadSession = &page{status: http.StatusBadRequest, Title: "Sign-in not verified",
-		Message: "This sign-in was not started in this browser, or its session cookie is missing. Start again from your assistant."}
-	pageInternal = &page{status: http.StatusInternalServerError, Title: "Something went wrong",
-		Message: "The server could not complete the sign-in. Try again in a moment."}
-	pageGoogleFailed = &page{status: http.StatusBadGateway, Title: "Google sign-in failed",
-		Message: "Google did not complete the sign-in. Try again from your assistant."}
-	pageEmailUnverified = &page{status: http.StatusForbidden, Title: "E-mail not verified",
-		Message: "Your Google account e-mail address is not verified."}
+	pageExpired = &page{
+		status: http.StatusBadRequest, Title: "Sign-in expired",
+		Message: "This sign-in request expired or was already used. Start again from your assistant.",
+	}
+	pageBadSession = &page{
+		status: http.StatusBadRequest, Title: "Sign-in not verified",
+		Message: "This sign-in was not started in this browser, or its session cookie is missing. Start again from your assistant.",
+	}
+	pageInternal = &page{
+		status: http.StatusInternalServerError, Title: "Something went wrong",
+		Message: "The server could not complete the sign-in. Try again in a moment.",
+	}
+	pageGoogleFailed = &page{
+		status: http.StatusBadGateway, Title: "Google sign-in failed",
+		Message: "Google did not complete the sign-in. Try again from your assistant.",
+	}
+	pageEmailUnverified = &page{
+		status: http.StatusForbidden, Title: "E-mail not verified",
+		Message: "Your Google account e-mail address is not verified.",
+	}
 )
 
 // busyPage is shown when a global sign-in budget is spent.
 func busyPage(retry time.Duration) *page {
-	return &page{status: http.StatusTooManyRequests, Title: "Too many sign-ins",
+	return &page{
+		status: http.StatusTooManyRequests, Title: "Too many sign-ins",
 		Message:    "The server is receiving too many sign-in requests. Wait a moment, then start again from your assistant.",
-		retryAfter: retry}
+		retryAfter: retry,
+	}
 }
 
 // authorize serves GET /oauth/authorize: it validates the request and shows
@@ -157,11 +170,13 @@ func busyPage(retry time.Duration) *page {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	form := pickAuthorizeParams(r.URL.Query())
+
 	ar, pg, err := s.parseAuthorize(ctx, form)
 	if pg != nil {
 		s.renderError(w, r, pg)
 		return
 	}
+
 	if err != nil {
 		s.writeAuthorizeError(ctx, w, r, ar, err)
 		return
@@ -172,29 +187,36 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if ok, retry := s.pendingLimit.take(s.now()); !ok {
 		s.log.WarnContext(ctx, "oauth: authorization budget spent, refusing")
 		s.renderError(w, r, busyPage(retry))
+
 		return
 	}
+
 	id, err := randomToken()
 	if err != nil {
 		s.fail(w, r, "generate pending id", err)
 		return
 	}
+
 	csrf, err := randomToken()
 	if err != nil {
 		s.fail(w, r, "generate csrf token", err)
 		return
 	}
+
 	if err := s.savePending(ctx, id, &pending{Form: form, CSRF: csrf, Deadline: s.now().Add(pendingTTL)}); err != nil {
 		s.fail(w, r, "save pending authorization", err)
 		return
 	}
+
 	s.setCSRFCookie(w, csrf, int(pendingTTL/time.Second))
 
 	host := ar.GetRedirectURI().Hostname()
+
 	name := host
 	if pc, ok := ar.GetClient().(*providerClient); ok && pc.name() != "" {
 		name = pc.name()
 	}
+
 	s.render(w, r, http.StatusOK, tmplConsent, map[string]string{
 		"ClientName":   name,
 		"RedirectHost": host,
@@ -208,32 +230,39 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 // client, approve sends the browser to Google.
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if err := r.ParseForm(); err != nil {
 		s.renderError(w, r, &page{status: http.StatusBadRequest, Title: "Bad request", Message: "The consent form could not be read."})
 		return
 	}
+
 	p, pg := s.takePending(ctx, r.PostForm.Get(fieldPending))
 	if pg != nil {
 		s.renderError(w, r, pg)
 		return
 	}
+
 	if !s.cookieMatches(r, p.CSRF) || !equalSecret(r.PostForm.Get(fieldCSRF), p.CSRF) {
 		s.renderError(w, r, pageBadSession)
 		return
 	}
+
 	ar, pg, err := s.parseAuthorize(ctx, p.Form)
 	if pg != nil {
 		s.renderError(w, r, pg)
 		return
 	}
+
 	if err != nil {
 		s.writeAuthorizeError(ctx, w, r, ar, err)
 		return
 	}
+
 	if r.PostForm.Get(fieldAction) != actionApprove {
 		s.clearCSRFCookie(w)
 		s.writeAuthorizeError(ctx, w, r, ar, fosite.ErrAccessDenied.WithHint("The user denied the request."))
+
 		return
 	}
 
@@ -242,11 +271,13 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "generate google state", err)
 		return
 	}
+
 	p.GoogleVerifier = oauth2.GenerateVerifier()
 	if err := s.savePending(ctx, state, p); err != nil {
 		s.fail(w, r, "save pending authorization", err)
 		return
 	}
+
 	http.Redirect(w, r, s.up.AuthCodeURL(state, p.GoogleVerifier), http.StatusSeeOther)
 }
 
@@ -264,26 +295,22 @@ type idClaims struct {
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
+
 	p, pg := s.takePending(ctx, q.Get(paramState))
 	if pg != nil {
 		s.renderError(w, r, pg)
 		return
 	}
+
 	if !s.cookieMatches(r, p.CSRF) {
 		s.renderError(w, r, pageBadSession)
 		return
 	}
+
 	s.clearCSRFCookie(w)
 
 	if gerr := q.Get(paramError); gerr != "" {
-		s.log.InfoContext(ctx, "oauth: google returned an error", slog.String("error", gerr))
-		if gerr == googleErrAccessDenied {
-			s.renderError(w, r, &page{status: http.StatusForbidden, Title: "Access not granted",
-				Message: "This server is in early access: e-mail " + s.operatorEmail + " to join. " +
-					"If you declined access on Google's page, start again from your assistant."})
-			return
-		}
-		s.renderError(w, r, pageGoogleFailed)
+		s.renderGoogleError(w, r, gerr)
 		return
 	}
 
@@ -292,6 +319,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, pg)
 		return
 	}
+
 	if err != nil {
 		s.writeAuthorizeError(ctx, w, r, ar, err)
 		return
@@ -301,28 +329,18 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.WarnContext(ctx, "oauth: google code exchange failed", slog.Any("error", err))
 		s.renderError(w, r, pageGoogleFailed)
+
 		return
 	}
+
 	sub, claims, pg := s.verifyIDToken(ctx, tok)
 	if pg != nil {
 		s.renderError(w, r, pg)
 		return
 	}
-	if !grantedContacts(tok) {
-		s.renderError(w, r, &page{status: http.StatusForbidden, Title: "Contacts access missing",
-			Message:  "You did not tick the Contacts permission on Google's page, and access to Contacts is required for this server to work.",
-			RetryURL: s.issuer + pathAuthorize + "?" + p.Form.Encode()})
-		return
-	}
-	if domain, ok := s.domainAllowed(claims); !ok {
-		s.log.InfoContext(ctx, "oauth: account domain refused", slog.String("domain", domain))
-		s.renderError(w, r, &page{status: http.StatusForbidden, Title: "Account not allowed",
-			Message: "Google accounts from the domain " + domain + " are not allowed on this server."})
-		return
-	}
-	if tok.RefreshToken == "" {
-		s.log.WarnContext(ctx, "oauth: google returned no refresh token")
-		s.renderError(w, r, pageGoogleFailed)
+
+	if pg := s.checkGoogleGrant(ctx, tok, claims, p.Form); pg != nil {
+		s.renderError(w, r, pg)
 		return
 	}
 
@@ -345,9 +363,59 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.writeAuthorizeError(ctx, w, r, ar, err)
 		return
 	}
+
 	s.log.InfoContext(ctx, "oauth: user connected",
 		slog.String("user_id", user.ID), slog.String("client_id", ar.GetClient().GetID()))
 	s.provider.WriteAuthorizeResponse(ctx, &issWriter{ResponseWriter: w, iss: s.issuer}, ar, resp)
+}
+
+// renderGoogleError reports an error returned by Google on the callback. An
+// access_denied error gets the early-access page: it is the answer for an
+// account that declined, or that Google refused for this app.
+func (s *Server) renderGoogleError(w http.ResponseWriter, r *http.Request, gerr string) {
+	s.log.InfoContext(r.Context(), "oauth: google returned an error", slog.String("error", gerr))
+
+	if gerr == googleErrAccessDenied {
+		s.renderError(w, r, &page{
+			status: http.StatusForbidden, Title: "Access not granted",
+			Message: "This server is in early access: e-mail " + s.operatorEmail + " to join. " +
+				"If you declined access on Google's page, start again from your assistant.",
+		})
+
+		return
+	}
+
+	s.renderError(w, r, pageGoogleFailed)
+}
+
+// checkGoogleGrant returns the page to show when the Google exchange result
+// cannot be used: contacts scope not granted, account domain refused, or no
+// refresh token. It returns nil when the grant is acceptable.
+func (s *Server) checkGoogleGrant(ctx context.Context, tok *oauth2.Token, claims idClaims, form url.Values) *page {
+	if !grantedContacts(tok) {
+		return &page{
+			status: http.StatusForbidden, Title: "Contacts access missing",
+			Message:  "You did not tick the Contacts permission on Google's page, and access to Contacts is required for this server to work.",
+			RetryURL: s.issuer + pathAuthorize + "?" + form.Encode(),
+		}
+	}
+
+	if domain, ok := s.domainAllowed(claims); !ok {
+		s.log.InfoContext(ctx, "oauth: account domain refused", slog.String("domain", domain))
+
+		return &page{
+			status: http.StatusForbidden, Title: "Account not allowed",
+			Message: "Google accounts from the domain " + domain + " are not allowed on this server.",
+		}
+	}
+
+	if tok.RefreshToken == "" {
+		s.log.WarnContext(ctx, "oauth: google returned no refresh token")
+
+		return pageGoogleFailed
+	}
+
+	return nil
 }
 
 // parseAuthorize validates an authorization request. It returns a page when
@@ -355,40 +423,24 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 // or a fosite error with the request to send it to the client.
 func (s *Server) parseAuthorize(ctx context.Context, form url.Values) (fosite.AuthorizeRequester, *page, error) {
 	if rm := form.Get(paramResponseMode); rm != "" && rm != responseModeQuery {
-		return nil, &page{status: http.StatusBadRequest, Title: "Unsupported request",
-			Message: "This server only returns authorization responses in the query string."}, nil
-	}
-	clientID := form.Get(paramClientID)
-	client, err := s.clients.GetClient(ctx, clientID)
-	if errors.Is(err, ErrClientRateLimited) {
-		s.log.WarnContext(ctx, "oauth: client metadata fetch budget spent", slog.String("client_id", clientID))
-		return nil, busyPage(minRetryAfter), nil
-	}
-	if err != nil {
-		s.log.InfoContext(ctx, "oauth: unknown client", slog.String("client_id", clientID), slog.Any("error", err))
-		return nil, &page{status: http.StatusBadRequest, Title: "Unknown application",
-			Message: "This application is not registered with this server, or its metadata could not be fetched."}, nil
+		return nil, &page{
+			status: http.StatusBadRequest, Title: "Unsupported request",
+			Message: "This server only returns authorization responses in the query string.",
+		}, nil
 	}
 
-	// Redirect URIs are checked here, before fosite, for every client kind:
-	// a CIMD document may list any scheme, and fosite would redirect errors
-	// to whatever URI it accepted.
-	redirect := form.Get(paramRedirectURI)
-	registered := client.GetRedirectURIs()
-	if redirect == "" && len(registered) == 1 {
-		redirect = registered[0]
-	}
-	if redirect == "" || !RedirectMatches(registered, redirect) || !safeRedirect(redirect) {
-		s.log.InfoContext(ctx, "oauth: redirect uri refused", slog.String("client_id", clientID))
-		return nil, &page{status: http.StatusBadRequest, Title: "Invalid redirect",
-			Message: "The application asked to return to an address it did not register, or one that is not allowed."}, nil
+	approved, pg := s.approveRedirect(ctx, form)
+	if pg != nil {
+		return nil, pg, nil
 	}
 
-	ctx = context.WithValue(ctx, approvedRedirectKey{}, approvedRedirect{clientID: clientID, uri: redirect})
+	ctx = context.WithValue(ctx, approvedRedirectKey{}, approved)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.issuer+pathAuthorize+"?"+form.Encode(), nil)
 	if err != nil {
 		return nil, nil, fosite.ErrServerError.WithWrap(err)
 	}
+
 	ar, err := s.provider.NewAuthorizeRequest(ctx, req)
 	if err != nil {
 		return ar, nil, err
@@ -398,6 +450,7 @@ func (s *Server) parseAuthorize(ctx context.Context, form url.Values) (fosite.Au
 	if err := checkPKCE(form); err != nil {
 		return ar, nil, err
 	}
+
 	if res, ok := form[paramResource]; ok && (len(res) != 1 || res[0] != s.resource) {
 		return ar, nil, &fosite.RFC6749Error{
 			ErrorField:       errInvalidTarget,
@@ -410,7 +463,50 @@ func (s *Server) parseAuthorize(ctx context.Context, form url.Values) (fosite.Au
 	// clients work; the verifier always checks it.
 	ar.GrantAudience(s.resource)
 	ar.GrantScope(MCPScope)
+
 	return ar, nil, nil
+}
+
+// approveRedirect resolves the client of an authorization request and returns
+// the redirect URI it may be sent back to, or the page to show instead.
+func (s *Server) approveRedirect(ctx context.Context, form url.Values) (approvedRedirect, *page) {
+	clientID := form.Get(paramClientID)
+
+	client, err := s.clients.GetClient(ctx, clientID)
+	if errors.Is(err, ErrClientRateLimited) {
+		s.log.WarnContext(ctx, "oauth: client metadata fetch budget spent", slog.String("client_id", clientID))
+		return approvedRedirect{}, busyPage(minRetryAfter)
+	}
+
+	if err != nil {
+		s.log.InfoContext(ctx, "oauth: unknown client", slog.String("client_id", clientID), slog.Any("error", err))
+
+		return approvedRedirect{}, &page{
+			status: http.StatusBadRequest, Title: "Unknown application",
+			Message: "This application is not registered with this server, or its metadata could not be fetched.",
+		}
+	}
+
+	// Redirect URIs are checked here, before fosite, for every client kind:
+	// a CIMD document may list any scheme, and fosite would redirect errors
+	// to whatever URI it accepted.
+	redirect := form.Get(paramRedirectURI)
+
+	registered := client.GetRedirectURIs()
+	if redirect == "" && len(registered) == 1 {
+		redirect = registered[0]
+	}
+
+	if redirect == "" || !RedirectMatches(registered, redirect) || !safeRedirect(redirect) {
+		s.log.InfoContext(ctx, "oauth: redirect uri refused", slog.String("client_id", clientID))
+
+		return approvedRedirect{}, &page{
+			status: http.StatusBadRequest, Title: "Invalid redirect",
+			Message: "The application asked to return to an address it did not register, or one that is not allowed.",
+		}
+	}
+
+	return approvedRedirect{clientID: clientID, uri: redirect}, nil
 }
 
 // checkPKCE requires an S256 code challenge (RFC 7636 §4.2: 43 to 128
@@ -420,9 +516,11 @@ func checkPKCE(form url.Values) error {
 	if form.Get(paramCodeChallengeMethod) != pkceMethodS256 {
 		return fosite.ErrInvalidRequest.WithHint("code_challenge_method must be S256.")
 	}
+
 	if len(challenge) < minPKCEChallenge || len(challenge) > maxPKCEChallenge || !pkceChallengeRe.MatchString(challenge) {
 		return fosite.ErrInvalidRequest.WithHint("A valid S256 code_challenge is required.")
 	}
+
 	return nil
 }
 
@@ -432,15 +530,18 @@ func (s *Server) writeAuthorizeError(ctx context.Context, w http.ResponseWriter,
 	rfc := fosite.ErrorToRFC6749Error(err)
 	s.log.InfoContext(ctx, "oauth: authorization request rejected",
 		slog.String("error", rfc.ErrorField), slog.String("hint", rfc.HintField))
+
 	if ar == nil || !ar.IsRedirectURIValid() {
-		status := rfc.CodeField
-		if status < http.StatusBadRequest {
-			status = http.StatusBadRequest
-		}
-		s.renderError(w, r, &page{status: status, Title: "Authorization failed",
-			Message: "The application sent an invalid authorization request (" + rfc.ErrorField + ")."})
+		status := max(rfc.CodeField, http.StatusBadRequest)
+
+		s.renderError(w, r, &page{
+			status: status, Title: "Authorization failed",
+			Message: "The application sent an invalid authorization request (" + rfc.ErrorField + ").",
+		})
+
 		return
 	}
+
 	s.provider.WriteAuthorizeError(ctx, &issWriter{ResponseWriter: w, iss: s.issuer}, ar, err)
 }
 
@@ -452,19 +553,23 @@ func (s *Server) verifyIDToken(ctx context.Context, tok *oauth2.Token) (string, 
 		s.log.WarnContext(ctx, "oauth: google returned no id token")
 		return "", idClaims{}, pageGoogleFailed
 	}
+
 	idt, err := s.idTokens.Verify(ctx, raw)
 	if err != nil {
 		s.log.WarnContext(ctx, "oauth: google id token rejected", slog.Any("error", err))
 		return "", idClaims{}, pageGoogleFailed
 	}
+
 	var c idClaims
 	if err := idt.Claims(&c); err != nil {
 		s.log.WarnContext(ctx, "oauth: decode id token claims", slog.Any("error", err))
 		return "", idClaims{}, pageGoogleFailed
 	}
+
 	if !c.EmailVerified || c.Email == "" || idt.Subject == "" {
 		return "", idClaims{}, pageEmailUnverified
 	}
+
 	return idt.Subject, c, nil
 }
 
@@ -485,12 +590,15 @@ func (s *Server) domainAllowed(c idClaims) (string, bool) {
 	if at := strings.LastIndex(c.Email, "@"); at >= 0 {
 		emailDomain = strings.ToLower(c.Email[at+1:])
 	}
+
 	if hd := strings.ToLower(c.HD); hd != "" {
 		return hd, len(s.allowedDomains) == 0 || slices.Contains(s.allowedDomains, hd)
 	}
+
 	if len(s.allowedDomains) == 0 {
 		return emailDomain, true
 	}
+
 	return emailDomain, slices.Contains(googleConsumerDomains, emailDomain) && slices.Contains(s.allowedDomains, emailDomain)
 }
 
@@ -501,6 +609,7 @@ func safeRedirect(raw string) bool {
 	if err != nil || u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") || u.Hostname() == "" {
 		return false
 	}
+
 	switch u.Scheme {
 	case schemeHTTPS:
 		return true
@@ -513,11 +622,13 @@ func safeRedirect(raw string) bool {
 
 func pickAuthorizeParams(q url.Values) url.Values {
 	out := url.Values{}
+
 	for _, k := range authorizeParamNames {
 		if v, ok := q[k]; ok {
 			out[k] = v
 		}
 	}
+
 	return out
 }
 
@@ -526,10 +637,12 @@ func (s *Server) savePending(ctx context.Context, id string, p *pending) error {
 	if ttl <= 0 {
 		return errors.New("oauth: pending authorization already expired")
 	}
+
 	data, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("oauth: encode pending authorization: %w", err)
 	}
+
 	return s.st.SavePending(ctx, id, data, ttl)
 }
 
@@ -539,22 +652,27 @@ func (s *Server) takePending(ctx context.Context, id string) (*pending, *page) {
 	if id == "" {
 		return nil, pageExpired
 	}
+
 	data, err := s.st.TakePending(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, pageExpired
 	}
+
 	if err != nil {
 		s.log.ErrorContext(ctx, "oauth: take pending authorization", slog.Any("error", err))
 		return nil, pageInternal
 	}
+
 	var p pending
 	if err := json.Unmarshal(data, &p); err != nil {
 		s.log.ErrorContext(ctx, "oauth: decode pending authorization", slog.Any("error", err))
 		return nil, pageInternal
 	}
+
 	if !s.now().Before(p.Deadline) {
 		return nil, pageExpired
 	}
+
 	return &p, nil
 }
 
@@ -602,6 +720,7 @@ func (w *issWriter) WriteHeader(code int) {
 			w.Header().Set("Location", loc.String())
 		}
 	}
+
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -614,6 +733,7 @@ func (s *Server) renderError(w http.ResponseWriter, r *http.Request, pg *page) {
 	if pg.retryAfter > 0 {
 		w.Header().Set(headerRetryAfter, retryAfterValue(pg.retryAfter))
 	}
+
 	s.render(w, r, pg.status, tmplError, pg)
 }
 
@@ -624,10 +744,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 	if err := s.templates.ExecuteTemplate(&buf, name, data); err != nil {
 		s.log.ErrorContext(r.Context(), "oauth: render page", slog.String("template", name), slog.Any("error", err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
 		return
 	}
+
 	SetPageHeaders(w.Header())
 	w.WriteHeader(status)
+
 	if _, err := buf.WriteTo(w); err != nil {
 		s.log.DebugContext(r.Context(), "oauth: write page", slog.Any("error", err))
 	}

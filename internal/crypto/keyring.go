@@ -67,46 +67,56 @@ func ParseKeyring(s string) (*Keyring, error) {
 	if strings.TrimSpace(s) == "" {
 		return nil, errEmptyKeyring
 	}
+
 	entries := strings.Split(s, entrySep)
 	kr := &Keyring{
 		keys: make([]key, 0, len(entries)),
 		byID: make(map[string]*key, len(entries)),
 	}
+
 	seen := make(map[string]struct{}, len(entries))
 	for i, entry := range entries {
 		id, encoded, ok := strings.Cut(strings.TrimSpace(entry), idSep)
 		if !ok {
 			return nil, fmt.Errorf("crypto: keyring entry %d: want keyid:base64", i+1)
 		}
+
 		if len(id) > maxKeyIDLen || !keyIDPattern.MatchString(id) {
 			return nil, fmt.Errorf("crypto: keyring entry %d: key id must be 1-%d chars of [A-Za-z0-9_-]", i+1, maxKeyIDLen)
 		}
+
 		if _, dup := seen[id]; dup {
 			return nil, fmt.Errorf("crypto: duplicate key id %q", id)
 		}
+
 		seen[id] = struct{}{}
 		// The decode error is dropped on purpose: it can quote key material.
 		secret, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
 			return nil, fmt.Errorf("crypto: key %q: invalid base64", id)
 		}
+
 		if len(secret) != keySize {
 			return nil, fmt.Errorf("crypto: key %q: got %d bytes, want %d", id, len(secret), keySize)
 		}
+
 		aead, err := newAEAD(secret)
 		if err != nil {
 			return nil, fmt.Errorf("crypto: key %q: %w", id, err)
 		}
+
 		header, err := newHeader(id)
 		if err != nil {
 			return nil, err
 		}
+
 		kr.keys = append(kr.keys, key{id: id, secret: secret, aead: aead, header: header})
 	}
 	// byID points into kr.keys, so it is filled only once the slice stops growing.
 	for i := range kr.keys {
 		kr.byID[kr.keys[i].id] = &kr.keys[i]
 	}
+
 	return kr, nil
 }
 
@@ -116,8 +126,10 @@ func newHeader(id string) ([]byte, error) {
 	if idLen < 1 || idLen > maxKeyIDLen {
 		return nil, fmt.Errorf("crypto: key id %q: length %d out of range", id, idLen)
 	}
+
 	header := make([]byte, 0, headerFixedLen+idLen)
 	header = append(header, formatVersion, uint8(idLen))
+
 	return append(header, id...), nil
 }
 
@@ -126,6 +138,7 @@ func newAEAD(secret []byte) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return cipher.NewGCM(block)
 }
 
@@ -143,10 +156,12 @@ func (kr *Keyring) Encrypt(plaintext, aad []byte) ([]byte, error) {
 	out := make([]byte, 0, len(k.header)+nonceSize+len(plaintext)+k.aead.Overhead())
 	out = append(out, k.header...)
 	nonceStart := len(out)
+
 	out = out[:nonceStart+nonceSize]
 	if _, err := rand.Read(out[nonceStart:]); err != nil {
 		return nil, fmt.Errorf("crypto: read nonce: %w", err)
 	}
+
 	return k.aead.Seal(out, out[nonceStart:], plaintext, aad), nil
 }
 
@@ -157,18 +172,22 @@ func (kr *Keyring) Decrypt(ciphertext, aad []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	k, ok := kr.byID[id]
 	if !ok {
 		return nil, fmt.Errorf("crypto: unknown key id %q", id)
 	}
+
 	nonceSize := k.aead.NonceSize()
 	if len(body) < nonceSize+k.aead.Overhead() {
 		return nil, errShortCiphertext
 	}
+
 	plaintext, err := k.aead.Open(nil, body[:nonceSize], body[nonceSize:], aad)
 	if err != nil {
 		return nil, fmt.Errorf("%w under key %q", errDecrypt, id)
 	}
+
 	return plaintext, nil
 }
 
@@ -183,14 +202,18 @@ func parseHeader(ciphertext []byte) (id string, body []byte, err error) {
 	if len(ciphertext) < headerFixedLen {
 		return "", nil, errShortCiphertext
 	}
+
 	if ciphertext[0] != formatVersion {
 		return "", nil, fmt.Errorf("crypto: unsupported ciphertext version %d", ciphertext[0])
 	}
+
 	idLen := int(ciphertext[1])
 	if idLen == 0 || len(ciphertext) < headerFixedLen+idLen {
 		return "", nil, errShortCiphertext
 	}
+
 	end := headerFixedLen + idLen
+
 	return string(ciphertext[headerFixedLen:end]), ciphertext[end:], nil
 }
 
@@ -205,8 +228,10 @@ func (kr *Keyring) HMACSecrets(label string) (active []byte, rotated [][]byte) {
 			// Only possible for lengths above 255*32 bytes, never for hmacSecretSize.
 			panic(fmt.Sprintf("crypto: hkdf for key %q: %v", k.id, err))
 		}
+
 		secrets[i] = secret
 	}
+
 	return secrets[0], secrets[1:]
 }
 
@@ -216,9 +241,11 @@ func GenerateKey() (string, error) {
 	if _, err := rand.Read(id); err != nil {
 		return "", fmt.Errorf("crypto: read key id: %w", err)
 	}
+
 	secret := make([]byte, keySize)
 	if _, err := rand.Read(secret); err != nil {
 		return "", fmt.Errorf("crypto: read key: %w", err)
 	}
+
 	return hex.EncodeToString(id) + idSep + base64.StdEncoding.EncodeToString(secret), nil
 }

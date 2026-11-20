@@ -134,9 +134,12 @@ func newFlagSet(getenv func(string) string, r *raw) (*flag.FlagSet, error) {
 		if v := getenv(EnvName(name)); v != "" {
 			def = v
 		}
+
 		fs.StringVar(p, name, def, usage)
 	}
+
 	var errs []error
+
 	boolean := func(p *bool, name string, def bool, usage string) {
 		if v := getenv(EnvName(name)); v != "" {
 			b, err := strconv.ParseBool(v)
@@ -146,6 +149,7 @@ func newFlagSet(getenv func(string) string, r *raw) (*flag.FlagSet, error) {
 				def = b
 			}
 		}
+
 		fs.BoolVar(p, name, def, usage)
 	}
 	integer := func(p *int, name string, def int, usage string) {
@@ -157,6 +161,7 @@ func newFlagSet(getenv func(string) string, r *raw) (*flag.FlagSet, error) {
 				def = n
 			}
 		}
+
 		fs.IntVar(p, name, def, usage)
 	}
 
@@ -193,8 +198,10 @@ func Usage(w io.Writer) {
 		_, _ = fmt.Fprintln(w, err)
 		return
 	}
+
 	fs.SetOutput(w)
 	fs.PrintDefaults()
+
 	_, _ = fmt.Fprintf(w, "\nEvery flag also reads %s<FLAG_UPPER_SNAKE>; the flag wins.\n", envPrefix)
 	_, _ = fmt.Fprintf(w, "Env only (required): %s, %s\n", envGoogleClientSecret, envEncryptionKeys)
 }
@@ -248,11 +255,14 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 	if !ok {
 		return Config{}, fmt.Errorf("unknown command %q", cmd)
 	}
+
 	var r raw
+
 	fs, err := newFlagSet(getenv, &r)
 	if err != nil {
 		return Config{}, err
 	}
+
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -276,15 +286,62 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 		Args:               fs.Args(),
 	}
 
-	var errs []error
-	switch {
-	case len(cfg.Args) == spec.nargs:
-	case spec.nargs == 0:
-		errs = append(errs, fmt.Errorf("%s: unexpected argument %q (flags must come first)", cmd, cfg.Args[0]))
-	default:
-		errs = append(errs, fmt.Errorf("%s: want exactly %d argument %s, got %d", cmd, spec.nargs, spec.argsUsage, len(cfg.Args)))
+	errs := validateArgs(cmd, spec, cfg.Args)
+	errs = append(errs, validateRequired(spec, &r, cfg)...)
+
+	if r.baseURL != "" {
+		u, err := parseBaseURL(r.baseURL)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		cfg.BaseURL = u
 	}
 
+	level, ok := logLevels[strings.ToLower(r.logLevel)]
+	if !ok {
+		errs = append(errs, fmt.Errorf("--%s: invalid value %q (want debug, info, warn or error)", flagLogLevel, r.logLevel))
+	}
+
+	cfg.LogLevel = level
+
+	errs = append(errs, validateRates(cfg)...)
+
+	if !strings.HasPrefix(cfg.MetricsPath, "/") {
+		errs = append(errs, fmt.Errorf("--%s must start with /, got %q", flagMetricsPath, cfg.MetricsPath))
+	}
+
+	password, err := metricsPassword(r.metricsPassword, r.metricsPasswordFile)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	cfg.MetricsPassword = password
+	if cfg.Metrics {
+		errs = append(errs, validateMetricsAuth(cfg.MetricsUser, cfg.MetricsPassword)...)
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+// validateArgs checks the positional argument count against the command spec.
+func validateArgs(cmd string, spec commandSpec, args []string) []error {
+	switch {
+	case len(args) == spec.nargs:
+		return nil
+	case spec.nargs == 0:
+		return []error{fmt.Errorf("%s: unexpected argument %q (flags must come first)", cmd, args[0])}
+	default:
+		return []error{fmt.Errorf("%s: want exactly %d argument %s, got %d", cmd, spec.nargs, spec.argsUsage, len(args))}
+	}
+}
+
+// validateRequired reports every value the command requires but finds empty.
+func validateRequired(spec commandSpec, r *raw, cfg Config) []error {
 	values := map[string]string{
 		reqBaseURL:            r.baseURL,
 		reqDBPath:             cfg.DBPath,
@@ -294,49 +351,31 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 		reqOperatorName:       cfg.OperatorName,
 		reqOperatorEmail:      cfg.OperatorEmail,
 	}
+
+	var errs []error
+
 	for _, name := range spec.required {
 		if values[name] == "" {
 			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
 	}
 
-	if r.baseURL != "" {
-		u, err := parseBaseURL(r.baseURL)
-		if err != nil {
-			errs = append(errs, err)
-		}
-		cfg.BaseURL = u
-	}
+	return errs
+}
 
-	level, ok := logLevels[strings.ToLower(r.logLevel)]
-	if !ok {
-		errs = append(errs, fmt.Errorf("--%s: invalid value %q (want debug, info, warn or error)", flagLogLevel, r.logLevel))
-	}
-	cfg.LogLevel = level
+// validateRates requires both per-user rate limits to be positive.
+func validateRates(cfg Config) []error {
+	var errs []error
 
 	if cfg.RateLimitReads <= 0 {
 		errs = append(errs, fmt.Errorf("--%s must be positive, got %d", flagRateLimitReads, cfg.RateLimitReads))
 	}
+
 	if cfg.RateLimitWrites <= 0 {
 		errs = append(errs, fmt.Errorf("--%s must be positive, got %d", flagRateLimitWrites, cfg.RateLimitWrites))
 	}
-	if !strings.HasPrefix(cfg.MetricsPath, "/") {
-		errs = append(errs, fmt.Errorf("--%s must start with /, got %q", flagMetricsPath, cfg.MetricsPath))
-	}
 
-	password, err := metricsPassword(r.metricsPassword, r.metricsPasswordFile)
-	if err != nil {
-		errs = append(errs, err)
-	}
-	cfg.MetricsPassword = password
-	if cfg.Metrics {
-		errs = append(errs, validateMetricsAuth(cfg.MetricsUser, cfg.MetricsPassword)...)
-	}
-
-	if err := errors.Join(errs...); err != nil {
-		return Config{}, err
-	}
-	return cfg, nil
+	return errs
 }
 
 // parseBaseURL requires an absolute https URL, or http on a loopback host.
@@ -345,9 +384,11 @@ func parseBaseURL(raw string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--%s: %w", flagBaseURL, err)
 	}
+
 	if u.Host == "" {
 		return nil, fmt.Errorf("--%s: %q has no host", flagBaseURL, raw)
 	}
+
 	switch u.Scheme {
 	case schemeHTTPS:
 	case schemeHTTP:
@@ -357,6 +398,7 @@ func parseBaseURL(raw string) (*url.URL, error) {
 	default:
 		return nil, fmt.Errorf("--%s: %q must use https", flagBaseURL, raw)
 	}
+
 	return u, nil
 }
 
@@ -365,6 +407,7 @@ func metricsPassword(value, path string) (string, error) {
 	if value != "" && path != "" {
 		return "", fmt.Errorf("--%s and --%s are mutually exclusive", flagMetricsPassword, flagMetricsPasswordFile)
 	}
+
 	if path == "" {
 		return value, nil
 	}
@@ -373,6 +416,7 @@ func metricsPassword(value, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--%s: %w", flagMetricsPasswordFile, err)
 	}
+
 	return strings.TrimSpace(string(b)), nil
 }
 
@@ -381,22 +425,26 @@ func validateMetricsAuth(user, password string) []error {
 	if user == "" {
 		errs = append(errs, fmt.Errorf("--%s is required with --%s", flagMetricsUser, flagMetrics))
 	}
+
 	switch {
 	case password == "":
 		errs = append(errs, fmt.Errorf("--%s or --%s is required with --%s", flagMetricsPassword, flagMetricsPasswordFile, flagMetrics))
 	case utf8.RuneCountInString(password) < minMetricsPasswordLen:
 		errs = append(errs, fmt.Errorf("--%s must be at least %d characters", flagMetricsPassword, minMetricsPasswordLen))
 	}
+
 	return errs
 }
 
 // parseDomains lowercases, trims and drops empty entries.
 func parseDomains(raw string) []string {
 	var out []string
-	for _, d := range strings.Split(raw, allowedDomainsSep) {
+
+	for d := range strings.SplitSeq(raw, allowedDomainsSep) {
 		if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
 			out = append(out, d)
 		}
 	}
+
 	return out
 }

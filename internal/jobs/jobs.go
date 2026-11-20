@@ -48,10 +48,13 @@ func Run(ctx context.Context, st *store.Store, rv Revoker, now func() time.Time)
 
 	flush := time.NewTicker(touchFlushInterval)
 	defer flush.Stop()
+
 	hourly := time.NewTicker(cleanupInterval)
 	defer hourly.Stop()
+
 	daily := time.NewTicker(purgeInterval)
 	defer daily.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,20 +84,24 @@ func cleanup(ctx context.Context, st *store.Store, now func() time.Time) {
 		logError(ctx, "jobs: delete expired rows", err)
 		return
 	}
+
 	slog.DebugContext(ctx, "jobs: deleted expired rows", slog.Int("count", n))
 }
 
 // purge deletes users and clients unused for inactivityWindow.
 func purge(ctx context.Context, st *store.Store, rv Revoker, now func() time.Time) {
 	cutoff := now().Add(-inactivityWindow)
+
 	users, err := st.InactiveUsers(ctx, cutoff)
 	if err != nil {
 		logError(ctx, "jobs: list inactive users", err)
 	}
+
 	for _, u := range users {
 		if ctx.Err() != nil {
 			return
 		}
+
 		purgeUser(ctx, st, rv, u.ID, cutoff)
 	}
 
@@ -103,6 +110,7 @@ func purge(ctx context.Context, st *store.Store, rv Revoker, now func() time.Tim
 		logError(ctx, "jobs: purge unused clients", err)
 		return
 	}
+
 	if n > 0 {
 		slog.InfoContext(ctx, "jobs: purged unused clients", slog.Int("count", n))
 	}
@@ -120,29 +128,36 @@ func purgeUser(ctx context.Context, st *store.Store, rv Revoker, userID string, 
 	refresh := ""
 	// expected is nullable: nil deletes without comparing the stored token.
 	expected := &refresh
+
 	tok, err := st.GoogleToken(ctx, userID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
 		slog.WarnContext(ctx, "jobs: read google token, deleting user without revoking",
 			slog.String("user_id", userID), slog.Any("error", err))
+
 		expected = nil
 	default:
 		refresh = tok.RefreshToken
 	}
+
 	deleted, err := st.DeleteUserIfInactive(ctx, userID, cutoff, expected)
 	if err != nil {
 		logError(ctx, "jobs: delete inactive user", err, slog.String("user_id", userID))
 		return
 	}
+
 	if !deleted {
 		slog.InfoContext(ctx, "jobs: user active again, not purged", slog.String("user_id", userID))
 		return
 	}
+
 	slog.InfoContext(ctx, "user disconnected", slog.String("user_id", userID), slog.String("reason", "inactive"))
+
 	if refresh == "" {
 		return
 	}
+
 	if err := rv.Revoke(ctx, refresh); err != nil {
 		slog.WarnContext(ctx, "jobs: google revoke failed after deleting the user",
 			slog.String("user_id", userID), slog.Any("error", err))
@@ -155,5 +170,6 @@ func logError(ctx context.Context, msg string, err error, attrs ...any) {
 	if ctx.Err() != nil {
 		return
 	}
+
 	slog.ErrorContext(ctx, msg, append(attrs, slog.Any("error", err))...)
 }
