@@ -49,13 +49,14 @@ export const TOOL_GROUPS: readonly { group: ToolGroup; title: string }[] = [
   { group: 'label', title: 'Organize with labels' },
 ];
 
-/** What the server keeps. Mirrors README "What is stored" and the privacy policy. */
+/**
+ * What the server keeps, in plain words for non-technical visitors. Same facts as README
+ * "What is stored" and the privacy policy, which give the technical detail.
+ */
 export const STORED: readonly string[] = [
-  'Your Google account id and e-mail address, with created and last-used dates',
-  'Your Google refresh and access tokens, encrypted with AES-256-GCM',
-  'Hashes of the tokens the server issues to your assistant, with their expiry',
-  'The assistants (OAuth clients) registered with the server',
-  'Sign-ins in progress, which expire after 10 minutes',
+  'Your Google account id and e-mail address',
+  'A fingerprint of the pass your assistant uses, never the pass itself',
+  'Which assistant apps connected, such as Claude or ChatGPT',
 ];
 
 /** What the server never keeps. Mirrors README "What is stored" and the privacy policy. */

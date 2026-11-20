@@ -34,8 +34,8 @@ const LABELS = ['Clients', 'Colleagues', 'Family', 'Friends'];
       <div class="tile-text">
         <h3 id="sig-title">From an e-mail signature to a full contact</h3>
         <p class="muted">
-          Ask your assistant to add the sender. <code>upsert_contact_by_email</code> fills the empty fields and never
-          overwrites yours. Reading the e-mail needs your assistant's own e-mail connector.
+          Ask your assistant to add the sender. It fills the empty fields and never overwrites yours. Reading the
+          e-mail needs your assistant's own e-mail connector.
         </p>
       </div>
       <div class="flow">
@@ -78,7 +78,6 @@ const LABELS = ['Clients', 'Colleagues', 'Family', 'Friends'];
           {LABELS.map((label, index) => <li style={`--i:${index}`}>{label}</li>)}
         </ul>
         <div class="added">
-          <code>modify_contact_group_members</code>
           <p><span class="avatar">C</span> Camille Durand added to <strong>Clients</strong></p>
         </div>
       </div>

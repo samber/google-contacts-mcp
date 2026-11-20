@@ -1,14 +1,15 @@
 ---
 // A conversation rendered as plain HTML: what using the connector looks like.
-// The tool names and arguments are real (internal/tools); the person and company are fictional.
+// The steps describe the real tools (search_contacts, update_contact) in plain words, so visitors
+// who never heard of MCP can follow; the person and company are fictional.
 ---
 
 <figure class="chat" aria-label="Example conversation with an assistant using the connector">
   <div class="thread">
     <p class="msg user">Who do I know at Halvard Robotics? Camille just became their CTO, update her card.</p>
-    <ul class="calls" aria-label="Tools the assistant called">
-      <li><code>search_contacts</code><span>query: "Halvard"</span><b class="done" aria-hidden="true">✓</b></li>
-      <li><code>update_contact</code><span>job_title: "CTO"</span><b class="done" aria-hidden="true">✓</b></li>
+    <ul class="calls" aria-label="What the assistant did">
+      <li>Searched your contacts for "Halvard"<b class="done" aria-hidden="true">✓</b></li>
+      <li>Updated Camille's job title<b class="done" aria-hidden="true">✓</b></li>
     </ul>
     <div class="msg assistant">
       <p class="dots" aria-hidden="true"><i></i><i></i><i></i></p>
@@ -64,17 +65,6 @@
     padding: 0.45rem 0.75rem;
     border-radius: var(--radius-sm);
     background: var(--surface);
-  }
-
-  .calls code {
-    color: var(--link);
-    font-weight: 600;
-  }
-
-  .calls span {
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 0.85em;
   }
 
   .done {
