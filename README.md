@@ -135,7 +135,7 @@ Please report vulnerabilities privately through the repository's **Security** ta
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+Planned ideas are tracked as [enhancement issues](https://github.com/samber/google-contacts-mcp/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement).
 
 ## License
 

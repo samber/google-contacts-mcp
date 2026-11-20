@@ -59,4 +59,4 @@ go test -race ./...
 ## References
 
 - Design spec: `docs/superpowers/specs/2026-11-19-google-contacts-mcp-design.md`
-- Roadmap: `docs/ROADMAP.md`
+- Roadmap: GitHub issues labelled `enhancement`
