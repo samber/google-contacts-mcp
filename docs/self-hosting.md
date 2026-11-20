@@ -4,7 +4,7 @@ Run your own `google-contacts-mcp` instance: one Go binary, one SQLite file, exa
 
 ## Quick start (local)
 
-You need Go 1.25 or newer and a Google OAuth client (see [Google Cloud setup](#google-cloud-setup); for local use, add `http://localhost:8080/oauth/google/callback` as an authorized redirect URI).
+You need Go 1.26 or newer and a Google OAuth client (see [Google Cloud setup](#google-cloud-setup); for local use, add `http://localhost:8080/oauth/google/callback` as an authorized redirect URI).
 
 ```sh
 go install github.com/samber/google-contacts-mcp/cmd/google-contacts-mcp@latest

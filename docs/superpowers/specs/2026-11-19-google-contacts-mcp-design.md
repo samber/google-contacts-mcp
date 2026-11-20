@@ -35,7 +35,7 @@ Anti-goals (failure even if it works):
 
 ## 3. Constraints
 
-- Go 1.25+ (go-sdk v1.8.0 declares `go 1.25.0`). Single CGO-free binary.
+- Go 1.26+ (several dependencies, among them `golang.org/x/oauth2` and `modernc.org/sqlite`, declare `go 1.26.0`). Single CGO-free binary.
 - SQLite via `modernc.org/sqlite`, path from `--db-path`. Single writer, so exactly one instance.
 - Hosts that wipe the local disk on every deploy need the database on a mounted network filesystem. SQLite therefore uses the rollback journal, not WAL, and the app must run as exactly one process: file locks are not reliable between hosts. No replication or backup ships with the project.
 - Google scope `https://www.googleapis.com/auth/contacts` is sensitive (not restricted): a public app needs sensitive-scope verification, no CASA assessment.

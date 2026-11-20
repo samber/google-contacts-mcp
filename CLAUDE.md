@@ -5,7 +5,7 @@
 - Remote, multi-tenant MCP server exposing user's Google Contacts to Claude and ChatGPT.
 - OAuth 2.1 authorization server toward MCP clients (ory/fosite); confidential OAuth client toward Google (People API v1).
 - One Go binary, one SQLite file, exactly one instance. Contact data never touches disk.
-- Module `github.com/samber/google-contacts-mcp`, binary `google-contacts-mcp`, `go 1.25` in `go.mod`, `CGO_ENABLED=0`.
+- Module `github.com/samber/google-contacts-mcp`, binary `google-contacts-mcp`, `go 1.26` in `go.mod`, `CGO_ENABLED=0`.
 
 ## Package map
 
