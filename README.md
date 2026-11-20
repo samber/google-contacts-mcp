@@ -61,7 +61,7 @@ google-contacts-mcp serve \
 
 The server listens on `127.0.0.1:8080`, stores its database in `./data/google-contacts-mcp.db`, and serves the MCP endpoint at `http://localhost:8080/mcp`. Open `http://localhost:8080/` to check it is running.
 
-Plain `http` is accepted only for `localhost` and `127.0.0.1`. Claude and ChatGPT connect from their own cloud, so they cannot reach a server on your laptop: to try them, expose the server through an HTTPS tunnel and use the tunnel URL as `--base-url`, or deploy it (see [Deploy on Clever Cloud](#3-deploy-on-clever-cloud)).
+Plain `http` is accepted only for `localhost` and `127.0.0.1`. Claude and ChatGPT connect from their own cloud, so they cannot reach a server on your laptop: to try them, expose the server through an HTTPS tunnel and use the tunnel URL as `--base-url`, or deploy it on a server with a public HTTPS address.
 
 A Docker image is also published:
 
@@ -181,43 +181,7 @@ Users not on the test list see an error page that invites them to e-mail the ope
 3. Run `google-contacts-mcp rekey` against the live database. It re-encrypts every Google token with the new key.
 4. Keep the old key listed for 180 days. The tokens the server issues to assistants are signed with a secret derived from the keys, so removing the old key early forces every user to reconnect.
 
-### 3. Deploy on Clever Cloud
-
-This tutorial deploys the server as a Clever Cloud Go application. Clever Cloud wipes the application disk on every deploy, so the SQLite database lives on an FS Bucket, a persistent network volume mounted on the application. This project does not replicate or back up the database: see **Backups** below.
-
-1. **Create the application.** In the Clever Cloud console (or with `clever create --type go`), create a Go application from this repository.
-2. **Pin it to one instance.** In the scaling settings, set the minimum and the maximum to one instance and disable auto-scaling. SQLite has a single writer, and file locks on a network volume are not reliable between hosts: two instances would corrupt the database.
-3. **Add an FS Bucket.** Create an FS Bucket add-on and link it to the application. Note the bucket host name the add-on shows.
-4. **Set the environment variables** on the application:
-
-   ```sh
-   CC_GO_PKG=./cmd/google-contacts-mcp
-   CC_RUN_COMMAND=google-contacts-mcp serve
-   CC_FS_BUCKET=/data:<bucket host>
-   CGO_ENABLED=0
-
-   GCMCP_BASE_URL=https://contacts.example.com
-   GCMCP_GOOGLE_CLIENT_ID=...
-   GCMCP_GOOGLE_CLIENT_SECRET=...
-   GCMCP_ENCRYPTION_KEYS=...
-   GCMCP_OPERATOR_NAME=Your Name
-   GCMCP_OPERATOR_EMAIL=you@example.com
-   ```
-
-   `CC_FS_BUCKET` mounts the bucket on the `data` folder of the application, where the server stores its database by default (`./data/google-contacts-mcp.db`). Check the syntax against the current Clever Cloud FS Bucket documentation. Clever Cloud sets `PORT`, so the server listens on `0.0.0.0:$PORT` (8080) without further configuration.
-
-5. **Add your domain.** Add a custom domain to the application (for example `contacts.example.com`), point a `CNAME` record to the target Clever Cloud shows, and let Clever Cloud issue the HTTPS certificate. `GCMCP_BASE_URL` and the Google redirect URI must use this domain.
-6. **Deploy** with `git push` to the Clever Cloud remote, then open `https://<your domain>/`.
-
-**Journal mode.** The server uses SQLite's rollback journal, not WAL, because WAL needs shared memory that network filesystems do not provide. Writes are slower than on a local disk, which is fine at this write rate.
-
-**Redeploying.** Clever Cloud can start the new instance before it stops the old one. Both would then open the same database on the bucket, and two writers on a network volume can corrupt it. Stop the application before you redeploy.
-
-**Backups.** The bucket is the only copy of the database. Nothing here replicates it, so take your own copies, for example with `sqlite3 <db file> ".backup <copy>"` run on the instance. If the bucket is lost, every user must reconnect.
-
-**Maintenance commands.** Run `rekey` and `disconnect` on the running instance, against the live database: open a shell with `clever ssh`, go to the application directory, and run `google-contacts-mcp rekey` (or `disconnect <email>`) with the same `GCMCP_*` environment as the server. With Docker, use `docker exec <container> google-contacts-mcp rekey`.
-
-### 4. Connect Claude and ChatGPT
+### 3. Connect Claude and ChatGPT
 
 The connector URL is your base URL followed by `/mcp`, for example `https://google-contacts-mcp.samber.dev/mcp`.
 
@@ -238,11 +202,11 @@ On Team and Enterprise plans, an owner may have to add the connector for the org
 
 Which ChatGPT plans can add custom apps changes often, and OpenAI's own help pages disagree with each other. Check OpenAI's current documentation for your plan before you start.
 
-### 5. Scheduled sync from e-mail signatures
+### 4. Scheduled sync from e-mail signatures
 
 This setup keeps your address book current without effort: every day, Claude reads the e-mails you received, extracts each sender's signature, and enriches or creates the matching contact. It never overwrites or deletes anything.
 
-1. In Claude, connect this server (tutorial 4) and the Gmail connector. Gmail only needs read access.
+1. In Claude, connect this server (tutorial 3) and the Gmail connector. Gmail only needs read access.
 2. Create a scheduled task that runs daily, with both connectors enabled, and paste this prompt:
 
 ```
