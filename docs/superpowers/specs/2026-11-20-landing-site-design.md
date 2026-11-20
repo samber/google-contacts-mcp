@@ -164,6 +164,7 @@ What it touches, to be confirmed by reading the code at planning time:
 - `--operator-name` and `--operator-email` are required today and shown on `/` and `/privacy`. `internal/oauth/provider.go` also uses the e-mail. They must stay required only where still used. Decide when planning.
 - Tests, README, CLAUDE.md and the spec change with it.
 - Moving the server to `mcp.google-contacts-mcp.samber.dev` changes the OAuth issuer and `GCMCP_BASE_URL`. This is configuration, not code, but it needs a checklist: the Google OAuth client's redirect URI, the consent screen's home and privacy links, the DNS and TLS for the new host, and every user re-adding the connector, since their tokens were issued by the old issuer.
+- Hosted-instance configuration to set at deploy time: `GCMCP_RATE_LIMIT_READS=50` and `GCMCP_RATE_LIMIT_WRITES=20` (the terms state these limits; the server defaults are 120 and 30), and `GCMCP_LOG_LEVEL=info` (the privacy policy describes what is logged at that level).
 
 ## Owner decisions and open items
 

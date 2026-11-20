@@ -44,17 +44,18 @@ const INACTIVITY_DAYS = 180;
     <li>Your contacts: names, e-mail addresses, phone numbers, notes or any other field.</li>
     <li>The tool inputs and outputs exchanged with your assistant.</li>
     <li>Any token in clear.</li>
-    <li>Personal data in logs at the default log level.</li>
+    <li>Contact data, tool arguments or results in logs at the default log level.</li>
   </ul>
   <p>
     At the default log level, each tool call writes one log line: the tool name, an internal user id, the duration and
-    the status. Arguments, results and tokens are never logged.
+    the status. At that level, arguments and results are not logged, and tokens never are.
   </p>
 
   <h2>Use of Google data</h2>
   <p>
-    Google data is used only to perform the actions your assistant requests. It is not shared, sold, or used for
-    advertising or to train models.
+    Google data is used only to perform the actions your assistant requests. The results of those actions are returned to
+    the assistant you connected, and handled by its provider under its own privacy policy. This service does not share
+    them with anyone else, sell them, or use them for advertising or to train models.
   </p>
   <p>
     This service's use and transfer of information received from Google APIs adheres to the <a href={GOOGLE_POLICY_URL}
@@ -93,9 +94,18 @@ const INACTIVITY_DAYS = 180;
     too.
   </p>
 
+  <h2>Legal basis and recipients</h2>
+  <p>
+    Your data is processed only to provide the service you asked for: connecting your assistant to your Google Contacts.
+  </p>
+  <p>
+    It is handled by Google, which hosts your contacts and may process data outside the European Union; by the assistant
+    you connect; and by the hosting provider that stores this service's database.
+  </p>
+
   <h2>Your rights</h2>
   <p>
-    You can ask for a copy of the data stored about you, or for its correction or deletion, by e-mail. If you think your
+    You can ask for a copy of the data stored about you, in a portable format, or for its correction, restriction or deletion, and you can object to its processing, by e-mail. If you think your
     data is mishandled, you can complain to the CNIL, the French data protection authority, at{' '}
     <a href={CNIL_URL}>cnil.fr</a>.
   </p>

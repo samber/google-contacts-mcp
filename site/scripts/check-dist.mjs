@@ -16,10 +16,12 @@ const {
 } = await import('../src/data/site.ts');
 
 // Go sources registering the MCP tools; the site's tool list must match them.
-const GO_TOOLS_DIR = fileURLToPath(new URL('../../internal/tools/', import.meta.url));
+// DIST_DIR and GO_TOOLS_DIR exist so scripts/check-dist.test.mjs can point the gate at a broken copy.
+const withSlash = (path) => (path.endsWith('/') ? path : `${path}/`);
+const GO_TOOLS_DIR = withSlash(process.env.GO_TOOLS_DIR ?? fileURLToPath(new URL('../../internal/tools/', import.meta.url)));
 const GO_TOOL_NAME = /Name:\s+"([a-z_]+)"/g;
 
-const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
+const DIST = withSlash(process.env.DIST_DIR ?? fileURLToPath(new URL('../dist/', import.meta.url)));
 
 // Pages the build must produce, with their canonical path. The 404 page is
 // not canonical anywhere: it must be marked noindex instead.
@@ -54,6 +56,23 @@ const failures = [];
 const fail = (message) => failures.push(message);
 
 const read = (name) => readFileSync(`${DIST}${name}`, 'utf8');
+
+/**
+ * Hosts of every external URL in HTML or CSS text: attribute values (including each
+ * entry of a srcset), CSS url(), and CSS @import. A protocol-relative URL such as
+ * "//cdn.example/x.css" counts as external.
+ */
+function* externalHosts(text) {
+  const candidates = [];
+  for (const [, value] of text.matchAll(/\s(?:href|src|action|poster|data|srcset)="([^"]*)"/g)) {
+    for (const entry of value.split(',')) candidates.push(entry.trim().split(/\s+/)[0]);
+  }
+  for (const [, url] of text.matchAll(/url\(\s*["']?([^)"']+)/g)) candidates.push(url);
+  for (const [, url] of text.matchAll(/@import\s+["']([^"']+)/g)) candidates.push(url);
+  for (const url of candidates) {
+    if (/^(https?:)?\/\//.test(url)) yield new URL(url.startsWith('//') ? `https:${url}` : url).host;
+  }
+}
 const countMatches = (text, pattern) => (text.match(pattern) ?? []).length;
 
 if (!existsSync(DIST)) {
@@ -86,8 +105,8 @@ function checkPage({ file, path }) {
     if (!html.includes(`href="${href}"`)) fail(`${file}: footer link to ${href} is missing`);
   }
 
-  for (const [, url] of html.matchAll(/(?:href|src|action)="(https?:\/\/[^"]+)"/g)) {
-    if (!ALLOWED_HOSTS.has(new URL(url).host)) fail(`${file}: reference to disallowed host ${url}`);
+  for (const host of externalHosts(html)) {
+    if (!ALLOWED_HOSTS.has(host)) fail(`${file}: reference to disallowed host ${host}`);
   }
 }
 
@@ -98,8 +117,8 @@ const assetsDir = `${DIST}_astro/`;
 if (existsSync(assetsDir)) {
   for (const name of readdirSync(assetsDir).filter((n) => n.endsWith('.css'))) {
     const css = readFileSync(`${assetsDir}${name}`, 'utf8');
-    for (const [, url] of css.matchAll(/url\(\s*["']?(https?:\/\/[^)"']+)/g)) {
-      fail(`_astro/${name}: external url() ${url}`);
+    for (const host of externalHosts(css)) {
+      if (!ALLOWED_HOSTS.has(host)) fail(`_astro/${name}: reference to disallowed host ${host}`);
     }
   }
 }
@@ -150,11 +169,15 @@ if (existsSync(`${DIST}index.html`)) {
     if (!home.includes(item)) fail(`index.html: stored/never-stored item is missing: ${item}`);
   }
 }
-if (existsSync(GO_TOOLS_DIR)) {
+if (!existsSync(GO_TOOLS_DIR)) {
+  // Never skip silently: without the Go sources the tool list could drift unnoticed.
+  fail(`internal/tools not found at ${GO_TOOLS_DIR}: cannot compare the tool list with the code`);
+} else {
   const goNames = new Set();
   for (const name of readdirSync(GO_TOOLS_DIR).filter((n) => n.endsWith('.go') && !n.endsWith('_test.go'))) {
     for (const [, tool] of readFileSync(`${GO_TOOLS_DIR}${name}`, 'utf8').matchAll(GO_TOOL_NAME)) goNames.add(tool);
   }
+  if (goNames.size === 0) fail('internal/tools: no tool registration found; the pattern in check-dist.mjs may be stale');
   const siteNames = new Set(TOOLS.map((t) => t.name));
   for (const name of goNames) if (!siteNames.has(name)) fail(`site.ts: TOOLS lacks ${name}, registered in internal/tools`);
   for (const name of siteNames) if (!goNames.has(name)) fail(`site.ts: tool ${name} is not registered in internal/tools`);
@@ -191,6 +214,28 @@ if (existsSync(`${DIST}privacy.html`)) {
 }
 if (existsSync(`${DIST}terms.html`) && !visibleText(read('terms.html')).includes('French law')) {
   fail('terms.html: governing law (French law) is missing');
+}
+
+// Privacy policy statements the owner and the Google verification rely on.
+if (existsSync(`${DIST}privacy.html`)) {
+  const privacy = visibleText(read('privacy.html'));
+  for (const phrase of [
+    'returned to the assistant you connected',
+    'arguments and results are not logged',
+    'hosting provider',
+    'outside the European Union',
+    'portable',
+  ]) {
+    if (!privacy.includes(phrase)) fail(`privacy.html: missing the statement "${phrase}"`);
+  }
+}
+
+// Example data must be obviously fictional: a LinkedIn handle that could be a real person is not allowed.
+for (const { file } of PAGES) {
+  if (!existsSync(`${DIST}${file}`)) continue;
+  for (const [, handle] of read(file).matchAll(/linkedin\.com\/in\/([A-Za-z0-9_-]+)/g)) {
+    if (!handle.includes('example')) fail(`${file}: LinkedIn handle "${handle}" does not look fictional (needs "example")`);
+  }
 }
 
 // Crawler and assistant discovery files.

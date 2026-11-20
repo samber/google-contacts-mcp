@@ -16,7 +16,7 @@ const FIELDS = [
   ['Company', 'Acme'],
   ['Title', 'CTO'],
   ['E-mail', 'camille@acme.example'],
-  ['LinkedIn', 'linkedin.com/in/c-durand'],
+  ['LinkedIn', 'linkedin.com/in/c-example'],
 ];
 
 const fieldRows = FIELDS.map(([label, value], index) => {

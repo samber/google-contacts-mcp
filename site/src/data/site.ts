@@ -60,7 +60,7 @@ export const NEVER_STORED: readonly string[] = [
   'Your contacts: names, e-mail addresses, phone numbers, notes or any other field',
   'Tool inputs and outputs exchanged with your assistant',
   'Any token in clear',
-  'Personal data in logs at the default log level',
+  'Contact data, tool arguments or results in logs at the default log level',
 ];
 
 /** Date (YYYY-MM-DD) of the last change to the privacy policy or the terms. Update it with every edit of either page. */
