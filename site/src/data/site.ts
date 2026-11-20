@@ -62,3 +62,6 @@ export const NEVER_STORED: readonly string[] = [
   'Any token in clear',
   'Personal data in logs at the default log level',
 ];
+
+/** Date (YYYY-MM-DD) of the last change to the privacy policy or the terms. Update it with every edit of either page. */
+export const LEGAL_UPDATED = '2026-11-20';

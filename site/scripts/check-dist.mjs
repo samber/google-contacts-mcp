@@ -4,7 +4,16 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-const { SITE_URL, MCP_URL, REPO_URL, TOOLS = [], STORED = [], NEVER_STORED = [] } = await import('../src/data/site.ts');
+const {
+  SITE_URL,
+  MCP_URL,
+  REPO_URL,
+  OPERATOR_EMAIL,
+  LEGAL_UPDATED = '',
+  TOOLS = [],
+  STORED = [],
+  NEVER_STORED = [],
+} = await import('../src/data/site.ts');
 
 // Go sources registering the MCP tools; the site's tool list must match them.
 const GO_TOOLS_DIR = fileURLToPath(new URL('../../internal/tools/', import.meta.url));
@@ -29,7 +38,14 @@ const ALLOWED_HOSTS = new Set([
   'developers.google.com',
   'myaccount.google.com',
   'modelcontextprotocol.io',
+  // The French data protection authority, named in the privacy policy.
+  'www.cnil.fr',
 ]);
+
+// Google requires this exact sentence in the privacy policy of apps that use its APIs.
+const LIMITED_USE_SENTENCE =
+  "This service's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.";
+const GOOGLE_POLICY_URL = 'https://developers.google.com/terms/api-services-user-data-policy';
 
 // Spec: the page script (copy button and card reveal) stays under 1 KB gzipped.
 const MAX_SCRIPT_GZIP_BYTES = 1024;
@@ -142,6 +158,39 @@ if (existsSync(GO_TOOLS_DIR)) {
   const siteNames = new Set(TOOLS.map((t) => t.name));
   for (const name of goNames) if (!siteNames.has(name)) fail(`site.ts: TOOLS lacks ${name}, registered in internal/tools`);
   for (const name of siteNames) if (!goNames.has(name)) fail(`site.ts: tool ${name} is not registered in internal/tools`);
+}
+
+// Legal pages.
+const visibleText = (html) =>
+  html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ');
+const mainOf = (html) => html.match(/<main[\s\S]*<\/main>/)?.[0] ?? '';
+
+if (!LEGAL_UPDATED) fail('site.ts: LEGAL_UPDATED is missing');
+for (const [file, other] of [
+  ['privacy.html', '/terms'],
+  ['terms.html', '/privacy'],
+]) {
+  if (!existsSync(`${DIST}${file}`)) continue;
+  const html = read(file);
+  if (!html.includes(OPERATOR_EMAIL)) fail(`${file}: operator e-mail is missing`);
+  if (LEGAL_UPDATED && !html.includes(LEGAL_UPDATED)) fail(`${file}: last-updated date ${LEGAL_UPDATED} is missing`);
+  if (!mainOf(html).includes(`href="${other}"`)) fail(`${file}: the page body does not link ${other}`);
+}
+if (existsSync(`${DIST}privacy.html`)) {
+  const html = read('privacy.html');
+  if (!visibleText(html).includes(LIMITED_USE_SENTENCE)) fail('privacy.html: the Google Limited Use sentence is missing or altered');
+  if (!html.includes(`href="${GOOGLE_POLICY_URL}"`)) fail('privacy.html: link to the Google API Services User Data Policy is missing');
+  if (!visibleText(html).includes('This website sets no cookies and runs no analytics.')) {
+    fail('privacy.html: the no-cookies, no-analytics statement is missing');
+  }
+}
+if (existsSync(`${DIST}terms.html`) && !visibleText(read('terms.html')).includes('French law')) {
+  fail('terms.html: governing law (French law) is missing');
 }
 
 // Crawler and assistant discovery files.

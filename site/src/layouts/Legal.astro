@@ -1,0 +1,82 @@
+---
+import IndexCard from '../components/IndexCard.astro';
+import Base from './Base.astro';
+
+type Props = {
+  /** Page title and h1, for example "Privacy policy". */
+  title: string;
+  description: string;
+  path: string;
+  /** Date of the last change, YYYY-MM-DD. */
+  updated: string;
+};
+
+const { title, description, path, updated } = Astro.props;
+const displayDate = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-GB', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+---
+
+<Base title={`${title} | Google Contacts MCP`} description={description} path={path}>
+  <div class="wrap legal">
+    <h1>{title}</h1>
+    <p class="updated">Last updated <time datetime={updated}>{displayDate}</time></p>
+    <IndexCard class="doc-card">
+      <article class="doc">
+        <slot />
+      </article>
+    </IndexCard>
+  </div>
+</Base>
+
+<style>
+  .legal {
+    display: grid;
+    gap: var(--space-3);
+    padding-block: var(--space-5) 0;
+    max-width: 52rem;
+  }
+
+  h1 {
+    font-size: var(--step-4);
+  }
+
+  .updated {
+    font-size: var(--step--1);
+    font-weight: 600;
+  }
+
+  .doc-card {
+    margin-top: var(--space-3);
+  }
+
+  /* Long-form text: the rules reach slotted content, so they are global but scoped to .doc. */
+  .doc :global(h2) {
+    margin-top: var(--space-5);
+    font-size: var(--step-2);
+  }
+
+  .doc :global(h2:first-child) {
+    margin-top: 0;
+  }
+
+  .doc :global(p),
+  .doc :global(ul) {
+    margin-top: var(--space-3);
+    max-width: var(--measure-text);
+  }
+
+  .doc :global(ul) {
+    display: grid;
+    gap: var(--space-2);
+    padding-left: 1.2rem;
+  }
+
+  .doc :global(h2 + p),
+  .doc :global(h2 + ul) {
+    margin-top: var(--space-2);
+  }
+</style>
