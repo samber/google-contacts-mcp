@@ -86,8 +86,9 @@ func TestOpen_MigratesTwiceIdempotent(t *testing.T) {
 	if err := s2.db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
 		t.Fatalf("pragma journal_mode: %v", err)
 	}
-	if mode != "wal" {
-		t.Errorf("journal_mode = %q, want wal", mode)
+	// WAL needs shared memory, which network filesystems do not provide.
+	if mode != "delete" {
+		t.Errorf("journal_mode = %q, want delete", mode)
 	}
 }
 

@@ -67,6 +67,7 @@ A Docker image is also published:
 
 ```sh
 docker run --rm -p 8080:8080 \
+  -v gcmcp-data:/data \
   -e GCMCP_BASE_URL=https://contacts.example.com \
   -e GCMCP_GOOGLE_CLIENT_ID=... \
   -e GCMCP_GOOGLE_CLIENT_SECRET=... \
@@ -76,7 +77,7 @@ docker run --rm -p 8080:8080 \
   ghcr.io/samber/google-contacts-mcp
 ```
 
-The container stores its database in `/data`, which is scratch space. Set the `LITESTREAM_*` variables described in [Deploy on Clever Cloud](#3-deploy-on-clever-cloud) to replicate it to S3-compatible storage; without them, the database lives only as long as the container.
+The container stores its database in `/data`, declared as a volume. Mount a persistent volume on it, as in the command above, or the database lives only as long as the container.
 
 ### Commands
 
@@ -182,17 +183,17 @@ Users not on the test list see an error page that invites them to e-mail the ope
 
 ### 3. Deploy on Clever Cloud
 
-This tutorial deploys the server as a Clever Cloud Go application, with its SQLite database replicated to a Cellar (S3-compatible) bucket by [Litestream](https://litestream.io). Clever Cloud wipes the disk on every deploy, so replication is required, not optional: at boot, `deploy/start.sh` restores the database from Cellar, then runs the server under Litestream, which streams every write back to Cellar.
+This tutorial deploys the server as a Clever Cloud Go application. Clever Cloud wipes the application disk on every deploy, so the SQLite database lives on an FS Bucket, a persistent network volume mounted on the application. This project does not replicate or back up the database: see **Backups** below.
 
 1. **Create the application.** In the Clever Cloud console (or with `clever create --type go`), create a Go application from this repository.
-2. **Pin it to one instance.** In the scaling settings, set the minimum and the maximum to one instance and disable auto-scaling. SQLite has a single writer: two instances would corrupt the replica.
-3. **Add Cellar.** Create a Cellar add-on, link it to the application, and create a bucket in it, for example `google-contacts-mcp`. The link exposes `CELLAR_ADDON_HOST`, `CELLAR_ADDON_KEY_ID` and `CELLAR_ADDON_KEY_SECRET`.
+2. **Pin it to one instance.** In the scaling settings, set the minimum and the maximum to one instance and disable auto-scaling. SQLite has a single writer, and file locks on a network volume are not reliable between hosts: two instances would corrupt the database.
+3. **Add an FS Bucket.** Create an FS Bucket add-on and link it to the application. Note the bucket host name the add-on shows.
 4. **Set the environment variables** on the application:
 
    ```sh
-   CC_PRE_BUILD_HOOK=deploy/clevercloud-prebuild.sh
    CC_GO_PKG=./cmd/google-contacts-mcp
-   CC_RUN_COMMAND=deploy/start.sh
+   CC_RUN_COMMAND=google-contacts-mcp serve
+   CC_FS_BUCKET=/data:<bucket host>
    CGO_ENABLED=0
 
    GCMCP_BASE_URL=https://contacts.example.com
@@ -201,21 +202,20 @@ This tutorial deploys the server as a Clever Cloud Go application, with its SQLi
    GCMCP_ENCRYPTION_KEYS=...
    GCMCP_OPERATOR_NAME=Your Name
    GCMCP_OPERATOR_EMAIL=you@example.com
-
-   LITESTREAM_REPLICA_URL=s3://google-contacts-mcp/google-contacts-mcp.db
-   LITESTREAM_ENDPOINT=https://<value of CELLAR_ADDON_HOST>
-   LITESTREAM_ACCESS_KEY_ID=<value of CELLAR_ADDON_KEY_ID>
-   LITESTREAM_SECRET_ACCESS_KEY=<value of CELLAR_ADDON_KEY_SECRET>
    ```
 
-   The pre-build hook installs a pinned, checksum-verified Litestream binary. Clever Cloud sets `PORT`, so the server listens on `0.0.0.0:$PORT` (8080) without further configuration. If Litestream cannot reach the bucket, uncomment `force-path-style: true` in `deploy/litestream.yml`.
+   `CC_FS_BUCKET` mounts the bucket on the `data` folder of the application, where the server stores its database by default (`./data/google-contacts-mcp.db`). Check the syntax against the current Clever Cloud FS Bucket documentation. Clever Cloud sets `PORT`, so the server listens on `0.0.0.0:$PORT` (8080) without further configuration.
 
 5. **Add your domain.** Add a custom domain to the application (for example `contacts.example.com`), point a `CNAME` record to the target Clever Cloud shows, and let Clever Cloud issue the HTTPS certificate. `GCMCP_BASE_URL` and the Google redirect URI must use this domain.
 6. **Deploy** with `git push` to the Clever Cloud remote, then open `https://<your domain>/`.
 
-**Redeploying.** Clever Cloud can start the new instance before it stops the old one. The new instance restores the database from Cellar at boot, so any write the old instance makes during the overlap is lost: refresh-token rotations and new connections in that window disappear, and the affected users must reconnect. During the overlap, two Litestream processes can also write to the same replica. To avoid both, stop the application before you redeploy, or accept that a few users may have to reconnect.
+**Journal mode.** The server uses SQLite's rollback journal, not WAL, because WAL needs shared memory that network filesystems do not provide. Writes are slower than on a local disk, which is fine at this write rate.
 
-**Maintenance commands.** `rekey` and `disconnect` must run against the restored database, never an empty one. On a fresh container or instance the local file does not exist until `deploy/start.sh` restores it, and passing a command to `deploy/start.sh` skips that restore. The simplest way is to run them on the running instance: open a shell with `clever ssh`, go to the application directory, and run `google-contacts-mcp rekey` (or `disconnect <email>`) with the same `GCMCP_*` environment as the server. Litestream replicates the change like any other write. With Docker, use `docker exec <container> google-contacts-mcp rekey`.
+**Redeploying.** Clever Cloud can start the new instance before it stops the old one. Both would then open the same database on the bucket, and two writers on a network volume can corrupt it. Stop the application before you redeploy.
+
+**Backups.** The bucket is the only copy of the database. Nothing here replicates it, so take your own copies, for example with `sqlite3 <db file> ".backup <copy>"` run on the instance. If the bucket is lost, every user must reconnect.
+
+**Maintenance commands.** Run `rekey` and `disconnect` on the running instance, against the live database: open a shell with `clever ssh`, go to the application directory, and run `google-contacts-mcp rekey` (or `disconnect <email>`) with the same `GCMCP_*` environment as the server. With Docker, use `docker exec <container> google-contacts-mcp rekey`.
 
 ### 4. Connect Claude and ChatGPT
 

@@ -37,7 +37,7 @@ Anti-goals (failure even if it works):
 
 - Go 1.25+ (go-sdk v1.8.0 declares `go 1.25.0`). Single CGO-free binary.
 - SQLite via `modernc.org/sqlite`, path from `--db-path`. Single writer, so exactly one instance.
-- Local disk only, never a network filesystem. On Clever Cloud the disk is wiped on every deploy, so Litestream restore-at-boot plus continuous replication to Cellar is mandatory there.
+- On Clever Cloud the disk is wiped on every deploy, so the database sits on a mounted FS Bucket, a network filesystem. SQLite therefore uses the rollback journal, not WAL, and the app must run as exactly one process: file locks are not reliable between hosts. No replication or backup ships with the project.
 - Google scope `https://www.googleapis.com/auth/contacts` is sensitive (not restricted): a public app needs sensitive-scope verification, no CASA assessment.
 - Until verification passes, the public instance runs in Google "Testing" mode: at most 100 test users, and Google refresh tokens expire 7 days after consent.
 
@@ -61,7 +61,7 @@ Picked: **ory/fosite**, chosen by the user for security pedigree. giantswarm/mcp
 Claude / ChatGPT ──OAuth 2.1 + MCP──▶ google-contacts-mcp ──OAuth + People API v1──▶ Google
                                           │
                                           └── SQLite (users, encrypted Google tokens,
-                                               token signatures, clients) ── Litestream ──▶ S3
+                                               token signatures, clients)
 ```
 
 The server is its own OAuth 2.1 authorization server toward MCP clients and a confidential OAuth client toward Google. It never forwards a client token to Google. Every tool call reads or writes Google directly; no contact data is cached on disk.
@@ -191,7 +191,7 @@ In-memory token bucket per Google account, separate buckets for reads and writes
 
 ## 10. Storage
 
-SQLite, WAL mode. Stored:
+SQLite, rollback-journal mode. Stored:
 
 - users: Google `sub`, e-mail address, created, last seen.
 - encrypted Google refresh and access tokens, key id.
@@ -254,12 +254,12 @@ Subcommands: `serve` (default), `genkey`, `rekey`, `disconnect <email|google-sub
 ## 14. Deliverables
 
 - Binary releases (linux, darwin; amd64, arm64) and a Docker image.
-- Clever Cloud (Go runtime): `CC_PRE_BUILD_HOOK` downloads a pinned Litestream release binary. `litestream.yml` lives in the repo and reads bucket, endpoint and credentials from env vars (Cellar add-on). The start command runs `litestream restore -if-db-not-exists -if-replica-exists` then `litestream replicate -exec "google-contacts-mcp serve"`. Pinned to one instance. The Go binary itself has no Litestream dependency. (My call.)
-- Docker image: bundles the same pinned Litestream binary and `litestream.yml`, same entrypoint logic; Litestream is skipped when no replica env vars are set.
+- Clever Cloud (Go runtime): `CC_GO_PKG` builds the binary, `CC_RUN_COMMAND=google-contacts-mcp serve` runs it, `CC_FS_BUCKET=/data:<bucket host>` mounts the FS Bucket that holds the database. Pinned to one instance.
+- Docker image: entrypoint `google-contacts-mcp`, default command `serve`, database in the `/data` volume.
 - README ends with five tutorials:
   1. What is stored: stored = Google account id, e-mail address, encrypted Google tokens, hashes of our tokens, registered clients; never stored = contacts, tool inputs/outputs, tokens in clear, personal data in logs at default level. How to erase everything (disconnect, revoke at myaccount.google.com/permissions, 180-day purge).
   2. Google Cloud setup: project, People API, consent screen, the three scopes, Web OAuth client with redirect URI `https://<host>/oauth/google/callback`, Testing vs verified app, rotating the client secret and the encryption key.
-  3. Deploy on Clever Cloud: Go app plus Cellar add-on for Litestream, listening on `0.0.0.0:8080`, pinned to one instance, custom domain and HTTPS. A redeploy can briefly run the new instance next to the old one; the new one restores from the replica at boot, so writes during the overlap (rotated refresh tokens, new connections) can be lost and two Litestream processes can write the same replica: recommend stopping the app before redeploying, or accepting that affected users reconnect. Maintenance commands (`rekey`, `disconnect`) must run against the restored database (on the running instance). `deploy/litestream.yml` carries a commented `force-path-style: true` hint for Cellar.
+  3. Deploy on Clever Cloud: Go app plus FS Bucket add-on, listening on `0.0.0.0:8080`, pinned to one instance, custom domain and HTTPS. A redeploy can briefly run the new instance next to the old one, and two writers on a network volume can corrupt the database: recommend stopping the app before redeploying. Tell readers the bucket is the only copy and to take their own backups. Maintenance commands (`rekey`, `disconnect`) run on the running instance.
   4. Connect Claude (Settings, Connectors, Add custom connector, `/mcp` URL) and ChatGPT (developer mode or Plugins page, Create app). Plan restrictions: tell readers to check OpenAI's current page; OpenAI's own docs conflict.
   5. Scheduled sync from e-mail signatures: a daily Claude task combining a Gmail connector with this server. Whether ChatGPT scheduled tasks can call these apps is unverified.
 - README sync prompt, shipped verbatim:

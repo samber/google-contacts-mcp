@@ -25,19 +25,22 @@ import (
 const (
 	// driverName is the database/sql name registered by modernc.org/sqlite.
 	driverName = "sqlite"
-	// dsnPragmas apply to every pooled connection: WAL for concurrent readers;
-	// enforced foreign keys so no child row outlives its user; a 5 s wait on a
-	// locked file; secure_delete so freed pages holding ciphertext are zeroed;
-	// and _txlock=immediate so a write transaction takes the write lock at
-	// BEGIN, waiting on busy_timeout instead of failing with SQLITE_BUSY when
-	// another process (rekey beside serve) committed after its snapshot.
-	dsnPragmas = "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
+	// dsnPragmas apply to every pooled connection: the rollback journal
+	// (DELETE) instead of WAL, because the database file may sit on a network
+	// volume and WAL needs a shared-memory file that network filesystems do
+	// not support; enforced foreign keys so no child row outlives its user; a
+	// 5 s wait on a locked file; secure_delete so freed pages holding
+	// ciphertext are zeroed; and _txlock=immediate so a write transaction
+	// takes the write lock at BEGIN, waiting on busy_timeout instead of
+	// failing with SQLITE_BUSY when another process (rekey beside serve)
+	// committed after its snapshot.
+	dsnPragmas = "?_pragma=foreign_keys(1)&_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)" +
 		"&_pragma=secure_delete(1)&_txlock=immediate"
 	// dsnQuerySep starts the DSN query string, so it cannot appear in the path.
 	dsnQuerySep = "?"
 	// dirMode keeps the data directory private to the service user.
 	dirMode = 0o700
-	// fileMode keeps the database private; SQLite gives -wal and -shm files the same mode.
+	// fileMode keeps the database private; SQLite gives the -journal file the same mode.
 	fileMode = 0o600
 	// maxOpenConns is 1 because SQLite allows one writer: a single connection
 	// serializes writes in Go instead of failing with SQLITE_BUSY.

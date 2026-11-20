@@ -45,9 +45,6 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
-    extra_files:
-      - deploy/start.sh
-      - deploy/litestream.yml
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.version: "{{ .Version }}"

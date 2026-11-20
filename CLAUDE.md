@@ -21,7 +21,6 @@
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
 - `internal/tools`: MCP server and ten contact tools.
 - `internal/web`: HTTP mux, `/` and `/privacy` pages, metrics basic auth.
-- `deploy/`: Litestream config, start script, Clever Cloud pre-build hook.
 
 ## Gates
 
@@ -45,7 +44,7 @@ go test -race ./...
 - **People API `resourceName`**: contact id (`people/c123`); groups are `contactGroups/abc`. Tools accept only these two shapes.
 - **CONTACT source etag**: etag of person's `CONTACT` source; updates must send current one, stale etag = `failedPrecondition`.
 - **Testing mode**: unverified Google app; max 100 test users, Google refresh tokens expire 7 days after consent.
-- **Litestream**: replicates SQLite file to S3 (Cellar); `deploy/start.sh` restores at boot, then runs server under `litestream replicate -exec`.
+- **FS Bucket**: Clever Cloud network volume mounted with `CC_FS_BUCKET`; holds the SQLite file, so journal mode is DELETE, not WAL. No replication or backup ships with the project.
 
 ## Conventions
 

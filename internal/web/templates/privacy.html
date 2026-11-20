@@ -41,7 +41,7 @@ body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; 
 <li>Revoke access yourself at <a href="{{.PermissionsURL}}">myaccount.google.com/permissions</a>. Your data is deleted the next time you use the connector after revoking access at Google; if you never use it again, the automatic purge below removes it.</li>
 <li>Accounts unused for {{.InactivityDays}} days are purged automatically, and their Google grant revoked.</li>
 </ul>
-<p>The database is backed up. Deleted data can remain in those backups until they expire under the operator's backup retention; Google tokens stay encrypted there too.</p>
+<p>The database lives on a persistent storage volume. Deleted data can remain in backups of that volume, if the operator or the hosting provider keeps any, until they expire under the backup retention; Google tokens stay encrypted there too.</p>
 
 <p><a href="/">Home</a></p>
 </body>
