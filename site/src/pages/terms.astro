@@ -3,9 +3,10 @@ import Legal from '../layouts/Legal.astro';
 import { LEGAL_UPDATED, OPERATOR_EMAIL, OPERATOR_NAME } from '../data/site';
 
 const GOOGLE_PERMISSIONS_URL = 'https://myaccount.google.com/permissions';
-// Matches the per-user, per-minute limits of the server (README configuration table).
-const READS_PER_MINUTE = 120;
-const WRITES_PER_MINUTE = 30;
+// Limits of the hosted instance, set by the owner. They differ from the server defaults
+// (120 and 30), so the deployment must set GCMCP_RATE_LIMIT_READS=50 and GCMCP_RATE_LIMIT_WRITES=20.
+const READS_PER_MINUTE = 50;
+const WRITES_PER_MINUTE = 20;
 // Matches the 180-day purge in the server (internal/jobs).
 const INACTIVITY_DAYS = 180;
 // Owner: these terms are a plain-language draft written from how the service behaves.
