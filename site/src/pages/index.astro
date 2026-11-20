@@ -1,16 +1,13 @@
 ---
-import { SITE_URL } from '../data/site';
+import Base from '../layouts/Base.astro';
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Google Contacts MCP</title>
-    <link rel="canonical" href={SITE_URL} />
-  </head>
-  <body>
+<Base
+  title="Google Contacts MCP"
+  description="Connect Claude or ChatGPT to your Google Contacts: search, create and enrich contacts by talking to your assistant."
+  path="/"
+>
+  <div class="wrap">
     <h1>Google Contacts MCP</h1>
-  </body>
-</html>
+  </div>
+</Base>

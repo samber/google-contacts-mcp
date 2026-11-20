@@ -1,0 +1,58 @@
+/*
+ * Design tokens. The palette comes from a real index card: white stock, blue
+ * ruled lines, a red header rule, a yellow highlighter on a cool grey desk.
+ * scripts/check-contrast.mjs reads this file: keep the light palette first and
+ * the dark palette in the media block below it.
+ */
+:root {
+  color-scheme: light dark;
+
+  --desk: #e4e9ee;
+  --card: #ffffff;
+  --ink: #16202a;
+  --rule: #b4cbe3;
+  --red: #d33f49;
+  --mark: #ffe066;
+  /* Text printed on the highlighter stays dark in both themes. */
+  --on-mark: #16202a;
+
+  --font-text: 'Schibsted Grotesk Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-typed: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+
+  /* Type scale: 17px body, ratio about 1.25. */
+  --step--1: 0.85rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.33rem;
+  --step-2: 1.66rem;
+  --step-3: 2.08rem;
+  --step-4: 2.6rem;
+  --step-hero: clamp(2.5rem, 1.4rem + 5vw, 4.75rem);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --space-6: 4rem;
+  --space-7: 6rem;
+
+  /* Index cards have small, even corners; nothing else on the page is rounded. */
+  --card-radius: 6px;
+  --card-shadow: 0 1px 0 var(--rule), 0 6px 14px -8px rgb(22 32 42 / 0.35);
+
+  --measure-text: 65ch;
+  --page-width: 72rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --desk: #0f1720;
+    --card: #1b2631;
+    --ink: #e8eef4;
+    --rule: #34506b;
+    --red: #ff6b73;
+    --mark: #f2d14a;
+    --on-mark: #16202a;
+    --card-shadow: 0 1px 0 var(--rule), 0 8px 18px -10px rgb(0 0 0 / 0.7);
+  }
+}
