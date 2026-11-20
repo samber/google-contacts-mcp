@@ -191,10 +191,10 @@ func TestToolLog_ResultCounts(t *testing.T) {
 	h, buf := logHarness(t, slog.LevelInfo)
 	a := h.people.put(contacts.Contact{GivenName: testGivenName})
 	h.people.put(contacts.Contact{GivenName: "Adam"})
-	h.ok("search_contacts", map[string]any{argQuery: "ad"}, nil)
+	h.ok(toolSearchContacts, map[string]any{argQuery: "ad"}, nil)
 	h.ok("delete_contact", map[string]any{argResourceName: a.ResourceName}, nil)
 
-	for tool, want := range map[string]float64{"search_contacts": 2, "delete_contact": 0} {
+	for tool, want := range map[string]float64{toolSearchContacts: 2, "delete_contact": 0} {
 		rec := toolLine(t, buf, tool)
 		if rec["result_count"] != want {
 			t.Errorf("%s result_count = %v, want %v", tool, rec["result_count"], want)
@@ -304,9 +304,9 @@ func TestMapError_InternalErrorHidesCause(t *testing.T) {
 	h, buf := logHarness(t, slog.LevelInfo)
 	cause := errors.New("people search: dial tcp 10.0.0.1:443: connection refused")
 	h.people.setErr("Search", cause)
-	h.fail("search_contacts", map[string]any{argQuery: "secret-query"}, msgInternal)
+	h.fail(toolSearchContacts, map[string]any{argQuery: "secret-query"}, msgInternal)
 
-	if rec := toolLine(t, buf, "search_contacts"); rec[keyStatus] != "error" {
+	if rec := toolLine(t, buf, toolSearchContacts); rec[keyStatus] != "error" {
 		t.Errorf("status = %v, want error", rec[keyStatus])
 	}
 
@@ -315,7 +315,7 @@ func TestMapError_InternalErrorHidesCause(t *testing.T) {
 		t.Fatalf("tool call failed lines = %d, want 1:\n%s", len(failed), buf.String())
 	}
 
-	if failed[0]["level"] != "ERROR" || failed[0]["error"] != cause.Error() || failed[0]["tool"] != "search_contacts" {
+	if failed[0]["level"] != "ERROR" || failed[0]["error"] != cause.Error() || failed[0]["tool"] != toolSearchContacts {
 		t.Errorf("failure line = %v, want ERROR with the cause", failed[0])
 	}
 
@@ -352,9 +352,9 @@ func TestToolLog_GoogleUnreachable(t *testing.T) {
 	h, buf := logHarness(t, slog.LevelInfo)
 	cause := contacts.UnreachableError{Op: "search", Err: errors.New("dial tcp 142.250.0.1:443: connect: connection refused")}
 	h.people.setErr("Search", cause)
-	h.fail("search_contacts", map[string]any{argQuery: "secret-query"}, msgUnreachable)
+	h.fail(toolSearchContacts, map[string]any{argQuery: "secret-query"}, msgUnreachable)
 
-	if rec := toolLine(t, buf, "search_contacts"); rec[keyStatus] != "error" {
+	if rec := toolLine(t, buf, toolSearchContacts); rec[keyStatus] != "error" {
 		t.Errorf("status = %v, want error", rec[keyStatus])
 	}
 
@@ -373,9 +373,9 @@ func TestToolLog_CanceledIsInfo(t *testing.T) {
 
 	h, buf := logHarness(t, slog.LevelInfo)
 	h.people.setErr("Search", fmt.Errorf("people search: %w", context.Canceled))
-	h.fail("search_contacts", map[string]any{argQuery: "q"}, msgCanceled)
+	h.fail(toolSearchContacts, map[string]any{argQuery: "q"}, msgCanceled)
 
-	rec := toolLine(t, buf, "search_contacts")
+	rec := toolLine(t, buf, toolSearchContacts)
 	if rec[keyStatus] != statusCanceled || rec["level"] != "INFO" {
 		t.Errorf("tool call line = %v, want INFO with status canceled", rec)
 	}

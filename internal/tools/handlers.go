@@ -251,7 +251,7 @@ func registerTools(srv *mcp.Server, deps Deps) {
 	}, handle(deps, true, modifyMembers))
 }
 
-func searchContacts(ctx context.Context, p contacts.People, in SearchInput) (string, SearchOutput, error) {
+func searchContacts(ctx context.Context, p contacts.People, in SearchInput) (SearchOutput, error) {
 	limit := in.Limit
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -261,17 +261,17 @@ func searchContacts(ctx context.Context, p contacts.People, in SearchInput) (str
 
 	found, err := p.Search(ctx, in.Query, limit)
 	if err != nil {
-		return "", SearchOutput{}, err
+		return SearchOutput{}, err
 	}
 
 	out := SearchOutput{Contacts: toOutputs(found)}
 
-	return countSummary(len(found), "contact found", "contacts found"), out, nil
+	return out, nil
 }
 
-func listContacts(ctx context.Context, p contacts.People, in ListInput) (string, ListOutput, error) {
+func listContacts(ctx context.Context, p contacts.People, in ListInput) (ListOutput, error) {
 	if in.Sort != "" && !slices.Contains(sortOrders, in.Sort) {
-		return "", ListOutput{}, newToolError("sort must be one of " + strings.Join(sortOrders, ", "))
+		return ListOutput{}, newToolError("sort must be one of " + strings.Join(sortOrders, ", "))
 	}
 
 	size := in.PageSize
@@ -284,34 +284,34 @@ func listContacts(ctx context.Context, p contacts.People, in ListInput) (string,
 	page, next, err := p.List(ctx, size, in.PageToken, in.Sort)
 	if err != nil {
 		if in.PageToken != "" && errors.Is(err, contacts.ErrInvalidArgument) {
-			return "", ListOutput{}, newToolError("invalid page_token")
+			return ListOutput{}, newToolError("invalid page_token")
 		}
 
-		return "", ListOutput{}, err
+		return ListOutput{}, err
 	}
 
 	out := ListOutput{Contacts: toOutputs(page), NextPageToken: next}
 
-	return countSummary(len(page), "contact listed", "contacts listed"), out, nil
+	return out, nil
 }
 
-func getContact(ctx context.Context, p contacts.People, in ResourceInput) (string, ContactOutput, error) {
+func getContact(ctx context.Context, p contacts.People, in ResourceInput) (ContactOutput, error) {
 	if err := checkResourceName(in.ResourceName); err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
 	c, err := p.Get(ctx, in.ResourceName)
 	if err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
-	return "contact " + c.ResourceName, toOutput(c), nil
+	return toOutput(c), nil
 }
 
-func createContact(ctx context.Context, p contacts.People, in CreateInput) (string, ContactOutput, error) {
+func createContact(ctx context.Context, p contacts.People, in CreateInput) (ContactOutput, error) {
 	groups, err := resolveGroups(ctx, p, in.Groups)
 	if err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
 	c := contacts.Contact{
@@ -329,15 +329,15 @@ func createContact(ctx context.Context, p contacts.People, in CreateInput) (stri
 
 	created, err := p.Create(ctx, c)
 	if err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
-	return "created contact " + created.ResourceName, toOutput(created), nil
+	return toOutput(created), nil
 }
 
-func updateContact(ctx context.Context, p contacts.People, in UpdateInput) (string, ContactOutput, error) {
+func updateContact(ctx context.Context, p contacts.People, in UpdateInput) (ContactOutput, error) {
 	if err := checkResourceName(in.ResourceName); err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
 	var groups []string
@@ -345,31 +345,31 @@ func updateContact(ctx context.Context, p contacts.People, in UpdateInput) (stri
 	if in.Groups != nil {
 		var err error
 		if groups, err = resolveGroups(ctx, p, *in.Groups); err != nil {
-			return "", ContactOutput{}, err
+			return ContactOutput{}, err
 		}
 	}
 	// A fresh read gives the current etag and the full person, which
 	// ToPerson overlays so unmapped data survives the write.
 	c, err := p.Get(ctx, in.ResourceName)
 	if err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
 	fields := applyUpdateInput(&c, in, groups)
 
 	if len(fields) == 0 {
 		// Update would otherwise fall back to every non-empty field.
-		return "", ContactOutput{}, newToolError("no field to update")
+		return ContactOutput{}, newToolError("no field to update")
 	}
 
 	slices.Sort(fields)
 
 	updated, err := p.Update(ctx, c, fields)
 	if err != nil {
-		return "", ContactOutput{}, err
+		return ContactOutput{}, err
 	}
 
-	return "updated contact " + updated.ResourceName, toOutput(updated), nil
+	return toOutput(updated), nil
 }
 
 // applyUpdateInput overlays the fields set in the input onto c and returns the
@@ -429,22 +429,22 @@ func applyUpdateInput(c *contacts.Contact, in UpdateInput, groups []string) []st
 	return fields
 }
 
-func deleteContact(ctx context.Context, p contacts.People, in ResourceInput) (string, DeleteOutput, error) {
+func deleteContact(ctx context.Context, p contacts.People, in ResourceInput) (DeleteOutput, error) {
 	if err := checkResourceName(in.ResourceName); err != nil {
-		return "", DeleteOutput{}, err
+		return DeleteOutput{}, err
 	}
 
 	if err := p.Delete(ctx, in.ResourceName); err != nil {
-		return "", DeleteOutput{}, err
+		return DeleteOutput{}, err
 	}
 
-	return "deleted contact " + in.ResourceName, DeleteOutput{ResourceName: in.ResourceName, Deleted: true}, nil
+	return DeleteOutput{ResourceName: in.ResourceName, Deleted: true}, nil
 }
 
-func listGroups(ctx context.Context, p contacts.People, _ struct{}) (string, GroupsOutput, error) {
+func listGroups(ctx context.Context, p contacts.People, _ struct{}) (GroupsOutput, error) {
 	groups, err := p.ListGroups(ctx)
 	if err != nil {
-		return "", GroupsOutput{}, mapError(err, msgGroupNotFound)
+		return GroupsOutput{}, mapError(err, msgGroupNotFound)
 	}
 
 	out := GroupsOutput{Groups: make([]GroupOutput, 0, len(groups))}
@@ -452,34 +452,34 @@ func listGroups(ctx context.Context, p contacts.People, _ struct{}) (string, Gro
 		out.Groups = append(out.Groups, toGroupOutput(g))
 	}
 
-	return countSummary(len(groups), "contact group", "contact groups"), out, nil
+	return out, nil
 }
 
-func createGroup(ctx context.Context, p contacts.People, in CreateGroupInput) (string, GroupOutput, error) {
+func createGroup(ctx context.Context, p contacts.People, in CreateGroupInput) (GroupOutput, error) {
 	if strings.TrimSpace(in.Name) == "" {
-		return "", GroupOutput{}, newToolError("name is required")
+		return GroupOutput{}, newToolError("name is required")
 	}
 
 	g, err := p.CreateGroup(ctx, in.Name)
 	if err != nil {
-		return "", GroupOutput{}, mapError(err, msgGroupNotFound)
+		return GroupOutput{}, mapError(err, msgGroupNotFound)
 	}
 
-	return "created contact group " + g.ResourceName, toGroupOutput(g), nil
+	return toGroupOutput(g), nil
 }
 
-func modifyMembers(ctx context.Context, p contacts.People, in ModifyMembersInput) (string, ModifyMembersOutput, error) {
+func modifyMembers(ctx context.Context, p contacts.People, in ModifyMembersInput) (ModifyMembersOutput, error) {
 	if len(in.Add) == 0 && len(in.Remove) == 0 {
-		return "", ModifyMembersOutput{}, newToolError("add or remove must list at least one contact")
+		return ModifyMembersOutput{}, newToolError("add or remove must list at least one contact")
 	}
 
 	if err := checkGroup(in.Group); err != nil {
-		return "", ModifyMembersOutput{}, err
+		return ModifyMembersOutput{}, err
 	}
 
 	for _, rn := range slices.Concat(in.Add, in.Remove) {
 		if err := checkResourceName(rn); err != nil {
-			return "", ModifyMembersOutput{}, err
+			return ModifyMembersOutput{}, err
 		}
 	}
 
@@ -487,15 +487,15 @@ func modifyMembers(ctx context.Context, p contacts.People, in ModifyMembersInput
 		// A bare ErrNotFound is Google's 404 on the group itself; members
 		// Google cannot find come back wrapped with their names.
 		if isBareNotFound(err) {
-			return "", ModifyMembersOutput{}, newToolError(msgGroupNotFound)
+			return ModifyMembersOutput{}, newToolError(msgGroupNotFound)
 		}
 
-		return "", ModifyMembersOutput{}, mapError(err, msgContactNotFound)
+		return ModifyMembersOutput{}, mapError(err, msgContactNotFound)
 	}
 
 	out := ModifyMembersOutput{Group: in.Group, Added: len(in.Add), Removed: len(in.Remove)}
 
-	return "updated members of contact group", out, nil
+	return out, nil
 }
 
 // groupCache lists the user's groups at most once per tool call, so resolving
@@ -559,14 +559,6 @@ func checkGroup(g string) error {
 	}
 
 	return nil
-}
-
-func countSummary(n int, singular, plural string) string {
-	if n == 1 {
-		return "1 " + singular
-	}
-
-	return fmt.Sprintf("%d %s", n, plural)
 }
 
 func toOutputs(cs []contacts.Contact) []ContactOutput {

@@ -57,17 +57,17 @@ func (o UpsertOutput) resultCount() int {
 }
 
 // upsertContact implements spec §8.1.
-func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (string, UpsertOutput, error) {
+func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (UpsertOutput, error) {
 	email := strings.TrimSpace(in.Email)
 
 	key := contacts.NormalizeEmail(email)
 	if key == "" {
-		return "", UpsertOutput{}, newToolError("email is required")
+		return UpsertOutput{}, newToolError("email is required")
 	}
 	// Resolve the group first so a bad name fails before any write.
 	group, err := resolveUpsertGroup(ctx, p, in.Group)
 	if err != nil {
-		return "", UpsertOutput{}, err
+		return UpsertOutput{}, err
 	}
 
 	incoming := contacts.Contact{
@@ -85,7 +85,7 @@ func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (stri
 	// searchContacts matches prefixes: keep only exact e-mail matches.
 	found, err := p.Search(ctx, key, maxSearchLimit)
 	if err != nil {
-		return "", UpsertOutput{}, err
+		return UpsertOutput{}, err
 	}
 
 	matches := exactEmailMatches(found, key)
@@ -102,12 +102,12 @@ func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (stri
 
 		created, err := p.Create(ctx, incoming)
 		if err != nil {
-			return "", UpsertOutput{}, err
+			return UpsertOutput{}, err
 		}
 
 		out := toOutput(created)
 
-		return "created contact " + created.ResourceName, UpsertOutput{Status: statusCreated, Contact: &out}, nil
+		return UpsertOutput{Status: statusCreated, Contact: &out}, nil
 	case 1:
 		return enrich(ctx, p, matches[0].ResourceName, incoming, group)
 	default:
@@ -116,7 +116,7 @@ func upsertContact(ctx context.Context, p contacts.People, in UpsertInput) (stri
 			out.Candidates = append(out.Candidates, Candidate{ResourceName: c.ResourceName, DisplayName: c.DisplayName, Organization: c.Company})
 		}
 
-		return countSummary(len(matches), "contact matches, nothing changed", "contacts match, nothing changed"), out, nil
+		return out, nil
 	}
 }
 
@@ -150,10 +150,10 @@ func exactEmailMatches(found []contacts.Contact, key string) []contacts.Contact 
 // enrich fills the matched contact from incoming and ensures group
 // membership. Search results may be partial, so it re-reads the contact for
 // the complete person and a fresh etag.
-func enrich(ctx context.Context, p contacts.People, resourceName string, incoming contacts.Contact, group string) (string, UpsertOutput, error) {
+func enrich(ctx context.Context, p contacts.People, resourceName string, incoming contacts.Contact, group string) (UpsertOutput, error) {
 	existing, err := p.Get(ctx, resourceName)
 	if err != nil {
-		return "", UpsertOutput{}, err
+		return UpsertOutput{}, err
 	}
 
 	merged, changed := contacts.Enrich(existing, incoming)
@@ -161,7 +161,7 @@ func enrich(ctx context.Context, p contacts.People, resourceName string, incomin
 	result := existing
 	if len(changed) > 0 {
 		if result, err = p.Update(ctx, merged, changed); err != nil {
-			return "", UpsertOutput{}, err
+			return UpsertOutput{}, err
 		}
 	}
 
@@ -169,10 +169,10 @@ func enrich(ctx context.Context, p contacts.People, resourceName string, incomin
 		if err := p.ModifyMembers(ctx, group, []string{result.ResourceName}, nil); err != nil {
 			// A bare ErrNotFound is Google's 404 on the group itself.
 			if isBareNotFound(err) {
-				return "", UpsertOutput{}, newToolError(msgGroupNotFound)
+				return UpsertOutput{}, newToolError(msgGroupNotFound)
 			}
 
-			return "", UpsertOutput{}, err
+			return UpsertOutput{}, err
 		}
 
 		result.Groups = append(slices.Clone(result.Groups), group)
@@ -182,10 +182,10 @@ func enrich(ctx context.Context, p contacts.People, resourceName string, incomin
 
 	out := toOutput(result)
 	if len(changed) == 0 {
-		return "unchanged contact " + result.ResourceName, UpsertOutput{Status: statusUnchanged, Contact: &out}, nil
+		return UpsertOutput{Status: statusUnchanged, Contact: &out}, nil
 	}
 
-	return "enriched contact " + result.ResourceName, UpsertOutput{Status: statusEnriched, Contact: &out, ChangedFields: changed}, nil
+	return UpsertOutput{Status: statusEnriched, Contact: &out, ChangedFields: changed}, nil
 }
 
 func hasEmail(c contacts.Contact, key string) bool {

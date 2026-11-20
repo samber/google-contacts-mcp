@@ -14,7 +14,8 @@ func TestUpsert_Created(t *testing.T) {
 
 	var out UpsertOutput
 
-	res := h.ok("upsert_contact_by_email", map[string]any{argEmail: "  Ada@X.io ", argGivenName: testGivenName, "company": testCompany}, &out)
+	h.ok("upsert_contact_by_email", map[string]any{argEmail: "  Ada@X.io ", argGivenName: testGivenName, "company": testCompany}, &out)
+
 	if out.Status != statusCreated || out.Contact == nil || out.Contact.ResourceName == "" {
 		t.Fatalf("out = %+v", out)
 	}
@@ -22,10 +23,6 @@ func TestUpsert_Created(t *testing.T) {
 	stored := h.people.stored(out.Contact.ResourceName)
 	if len(stored.Emails) != 1 || stored.Emails[0].Value != "Ada@X.io" || stored.GivenName != testGivenName || stored.Company != testCompany {
 		t.Errorf("stored = %+v", stored)
-	}
-
-	if got := resultText(res); got != "created contact "+out.Contact.ResourceName {
-		t.Errorf("summary = %q", got)
 	}
 }
 
@@ -42,13 +39,14 @@ func TestUpsert_Enriched(t *testing.T) {
 
 	var out UpsertOutput
 
-	res := h.ok("upsert_contact_by_email", map[string]any{
+	h.ok("upsert_contact_by_email", map[string]any{
 		argEmail:     testEmail,
 		argGivenName: "Other",
 		"company":    "Other Co",
 		"job_title":  testJobTitle,
 		"phones":     []map[string]string{{argValue: "+33612"}, {argValue: "+44 1", argType: testTypeWork}},
 	}, &out)
+
 	if out.Status != statusEnriched {
 		t.Fatalf("status = %q", out.Status)
 	}
@@ -65,10 +63,6 @@ func TestUpsert_Enriched(t *testing.T) {
 
 	if h.people.callsOf("Get") != 1 {
 		t.Errorf("Get calls = %d, want 1 (search results may be partial)", h.people.callsOf("Get"))
-	}
-
-	if got := resultText(res); got != "enriched contact "+c.ResourceName {
-		t.Errorf("summary = %q", got)
 	}
 }
 

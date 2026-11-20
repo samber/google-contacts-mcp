@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -133,7 +134,7 @@ func NewHandler(deps Deps) http.Handler {
 
 // toolFunc is a tool body: it runs with the caller's People client once the
 // middleware has admitted the call.
-type toolFunc[In, Out any] func(ctx context.Context, p contacts.People, in In) (summary string, out Out, err error)
+type toolFunc[In, Out any] func(ctx context.Context, p contacts.People, in In) (out Out, err error)
 
 // handle wraps a tool body with the per-call middleware, in order: resolve
 // the user, touch it, take a rate-limit token, take the write lock for
@@ -198,12 +199,23 @@ func runTool[In, Out any](ctx context.Context, deps Deps, userID string, write b
 		return nil, zero, mapError(err, msgContactNotFound)
 	}
 
-	summary, out, err := fn(ctx, p, in)
+	out, err := fn(ctx, p, in)
 	if err != nil {
 		return nil, zero, mapError(err, msgContactNotFound)
 	}
 
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: summary}}}, out, nil
+	// Clients such as claude.ai hand only `content` to the model and drop
+	// `structuredContent`, so the serialized output must travel in a text
+	// block too (MCP 2025-06-18: a tool returning structured content SHOULD
+	// also return its serialized JSON in a TextContent block). Setting
+	// Content here keeps the result independent of the SDK's default
+	// fallback, which only applies while Content is nil.
+	data, err := json.Marshal(out)
+	if err != nil {
+		return nil, zero, &toolError{msg: msgInternal, cause: err}
+	}
+
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(data)}}}, out, nil
 }
 
 // errNoUser is the logged cause of a call that reached a tool without an

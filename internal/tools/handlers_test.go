@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,6 +22,10 @@ import (
 )
 
 const (
+	// successContentBlocks is the text blocks of a successful result: the
+	// serialized structured output only.
+	successContentBlocks = 1
+
 	testUserID = "user-1"
 	testToken  = "good-token"
 	// testMetadataURL is what the 401 header must point to.
@@ -48,6 +53,8 @@ const (
 	testGroupResourceName = "contactGroups/inv"
 	// toolCreateContactGroup is the MCP tool name that creates a contact group.
 	toolCreateContactGroup = "create_contact_group"
+	// toolSearchContacts is the MCP tool name that searches contacts.
+	toolSearchContacts = "search_contacts"
 	// keyStatus is the structured-log and metric label key holding the call outcome.
 	keyStatus = "status"
 
@@ -565,6 +572,8 @@ func (h *harness) ok(name string, args, out any) *mcp.CallToolResult {
 		h.t.Fatalf("%s: tool error %q", name, resultText(res))
 	}
 
+	requireSerializedOutput(h.t, name, res)
+
 	if out != nil {
 		raw, err := json.Marshal(res.StructuredContent)
 		if err != nil {
@@ -605,7 +614,99 @@ func resultText(res *mcp.CallToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
-func TestGetContact_SummaryAndTouch(t *testing.T) {
+// jsonText returns the text block of a successful result: the serialized
+// structured output.
+func jsonText(res *mcp.CallToolResult) string {
+	if len(res.Content) == 0 {
+		return ""
+	}
+
+	tc, ok := res.Content[0].(*mcp.TextContent)
+	if !ok {
+		return ""
+	}
+
+	return tc.Text
+}
+
+// requireSerializedOutput fails unless a successful result carries exactly one
+// text block holding the JSON of its structured content, the only part of a
+// result some clients hand to the model.
+func requireSerializedOutput(t *testing.T, name string, res *mcp.CallToolResult) {
+	t.Helper()
+
+	if len(res.Content) != successContentBlocks {
+		t.Fatalf("%s: %d content blocks, want %d", name, len(res.Content), successContentBlocks)
+	}
+
+	var fromText, fromStructured any
+	if err := json.Unmarshal([]byte(jsonText(res)), &fromText); err != nil {
+		t.Fatalf("%s: content JSON %q: %v", name, jsonText(res), err)
+	}
+
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("%s: marshal structured content: %v", name, err)
+	}
+
+	if err := json.Unmarshal(raw, &fromStructured); err != nil {
+		t.Fatalf("%s: decode structured content %s: %v", name, raw, err)
+	}
+
+	if !reflect.DeepEqual(fromText, fromStructured) {
+		t.Errorf("%s: content JSON %s differs from structured content %s", name, jsonText(res), raw)
+	}
+}
+
+func TestSearchContacts_ContentCarriesContacts(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{GivenName: testGivenName, Emails: []contacts.Typed{{Value: testEmail, Type: testTypeWork}}})
+
+	res := h.ok(toolSearchContacts, map[string]any{argQuery: "ad"}, nil)
+
+	var out SearchOutput
+	if err := json.Unmarshal([]byte(jsonText(res)), &out); err != nil {
+		t.Fatalf("content JSON %q: %v", jsonText(res), err)
+	}
+
+	if len(out.Contacts) != 1 || out.Contacts[0].ResourceName != c.ResourceName || out.Contacts[0].GivenName != testGivenName ||
+		len(out.Contacts[0].Emails) != 1 || out.Contacts[0].Emails[0].Value != testEmail {
+		t.Errorf("content contacts = %+v, want %s with %s", out.Contacts, c.ResourceName, testEmail)
+	}
+}
+
+func TestReadTools_ContentMatchesStructuredContent(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	c := h.people.put(contacts.Contact{GivenName: testGivenName, Emails: []contacts.Typed{{Value: testEmail, Type: testTypeWork}}})
+	h.people.setGroups([]contacts.Group{{ResourceName: "contactGroups/myContacts", Name: "My Contacts", Type: contacts.GroupTypeSystem, MemberCount: 1}})
+
+	tests := []struct {
+		tool string
+		args map[string]any
+	}{
+		{toolSearchContacts, map[string]any{argQuery: "ad"}},
+		{"list_contacts", map[string]any{}},
+		{"get_contact", map[string]any{argResourceName: c.ResourceName}},
+		{"list_contact_groups", map[string]any{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			t.Parallel()
+
+			// h.ok already runs requireSerializedOutput; the explicit call
+			// keeps this test failing on its own if that ever changes.
+			res := h.ok(tt.tool, tt.args, nil)
+			requireSerializedOutput(t, tt.tool, res)
+		})
+	}
+}
+
+func TestGetContact_Touch(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
@@ -613,13 +714,10 @@ func TestGetContact_SummaryAndTouch(t *testing.T) {
 
 	var out ContactOutput
 
-	res := h.ok("get_contact", map[string]any{argResourceName: c.ResourceName}, &out)
+	h.ok("get_contact", map[string]any{argResourceName: c.ResourceName}, &out)
+
 	if out.ResourceName != c.ResourceName || out.GivenName != testGivenName || out.Etag != c.Etag || len(out.Emails) != 1 || out.Emails[0].Type != testTypeWork {
 		t.Errorf("output = %+v", out)
-	}
-
-	if got := resultText(res); got != "contact "+c.ResourceName {
-		t.Errorf("summary = %q", got)
 	}
 
 	if touched := h.toucher.ids(); len(touched) == 0 || touched[0] != testUserID {
@@ -640,13 +738,10 @@ func TestSearchContacts(t *testing.T) {
 
 	var out SearchOutput
 
-	res := h.ok("search_contacts", map[string]any{argQuery: "ad"}, &out)
+	h.ok(toolSearchContacts, map[string]any{argQuery: "ad"}, &out)
+
 	if len(out.Contacts) != 2 {
 		t.Errorf("contacts = %+v", out.Contacts)
-	}
-
-	if got := resultText(res); got != "2 contacts found" {
-		t.Errorf("summary = %q", got)
 	}
 }
 
@@ -661,14 +756,15 @@ func TestCreateContact_GroupsByName(t *testing.T) {
 
 	var out ContactOutput
 
-	res := h.ok("create_contact", map[string]any{
+	h.ok("create_contact", map[string]any{
 		argGivenName: testGivenName,
 		"emails":     []map[string]string{{argValue: testEmail, argType: testTypeWork}},
 		"websites":   []map[string]string{{argValue: "https://linkedin.com/in/ada", argType: "linkedin"}},
 		"groups":     []string{testGroupNameLower, "contactGroups/raw"},
 	}, &out)
-	if out.ResourceName == "" || resultText(res) != "created contact "+out.ResourceName {
-		t.Errorf("out = %+v, summary %q", out, resultText(res))
+
+	if out.ResourceName == "" {
+		t.Errorf("out = %+v", out)
 	}
 
 	stored := h.people.stored(out.ResourceName)
@@ -700,7 +796,7 @@ func TestUpdateContact_OnlyProvidedFields(t *testing.T) {
 
 	var out ContactOutput
 
-	res := h.ok("update_contact", map[string]any{
+	h.ok("update_contact", map[string]any{
 		argResourceName: c.ResourceName,
 		"job_title":     testJobTitle,
 		"notes":         "",
@@ -723,10 +819,6 @@ func TestUpdateContact_OnlyProvidedFields(t *testing.T) {
 
 	if len(stored.Phones) != 1 || stored.Phones[0].Value != "+44 2" || len(stored.Emails) != 1 {
 		t.Errorf("phones = %+v emails = %+v", stored.Phones, stored.Emails)
-	}
-
-	if got := resultText(res); got != "updated contact "+c.ResourceName {
-		t.Errorf("summary = %q", got)
 	}
 
 	if h.people.callsOf("Get") != 1 {
@@ -757,9 +849,10 @@ func TestDeleteContact(t *testing.T) {
 
 	var out DeleteOutput
 
-	res := h.ok("delete_contact", map[string]any{argResourceName: c.ResourceName}, &out)
-	if !out.Deleted || out.ResourceName != c.ResourceName || resultText(res) != "deleted contact "+c.ResourceName {
-		t.Errorf("out = %+v summary %q", out, resultText(res))
+	h.ok("delete_contact", map[string]any{argResourceName: c.ResourceName}, &out)
+
+	if !out.Deleted || out.ResourceName != c.ResourceName {
+		t.Errorf("out = %+v", out)
 	}
 
 	if _, ok := h.people.lookup(c.ResourceName); ok {
@@ -849,7 +942,7 @@ func TestUpstreamAuthMessage(t *testing.T) {
 
 	h := newHarness(t)
 	h.factory.setErr(contacts.ErrUpstreamAuth)
-	h.fail("search_contacts", map[string]any{argQuery: "a"}, "Google access was revoked; reconnect this connector")
+	h.fail(toolSearchContacts, map[string]any{argQuery: "a"}, "Google access was revoked; reconnect this connector")
 	h.factory.setErr(nil)
 	h.people.setErr("Get", fmt.Errorf("people get: %w", contacts.ErrUpstreamAuth))
 	h.fail("get_contact", map[string]any{argResourceName: testResourceName}, "Google access was revoked; reconnect this connector")
@@ -870,9 +963,10 @@ func TestContactGroups(t *testing.T) {
 
 	var list GroupsOutput
 
-	res := h.ok("list_contact_groups", map[string]any{}, &list)
-	if len(list.Groups) != 2 || list.Groups[0].MemberCount != 4 || resultText(res) != "2 contact groups" {
-		t.Errorf("groups = %+v summary %q", list.Groups, resultText(res))
+	h.ok("list_contact_groups", map[string]any{}, &list)
+
+	if len(list.Groups) != 2 || list.Groups[0].MemberCount != 4 {
+		t.Errorf("groups = %+v", list.Groups)
 	}
 
 	c := h.people.put(contacts.Contact{GivenName: testGivenName})
@@ -896,7 +990,7 @@ func TestToolErrorsHideUnknownCauses(t *testing.T) {
 
 	h := newHarness(t)
 	h.people.setErr("Search", contacts.UpstreamStatusError{Op: "search", Status: 503})
-	h.fail("search_contacts", map[string]any{argQuery: "secret-query"}, "people search: google returned HTTP 503")
+	h.fail(toolSearchContacts, map[string]any{argQuery: "secret-query"}, "people search: google returned HTTP 503")
 }
 
 func TestToolAnnotations(t *testing.T) {
@@ -933,7 +1027,7 @@ func TestToolAnnotations(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 
-	reads := []string{"search_contacts", "list_contacts", "get_contact", "list_contact_groups"}
+	reads := []string{toolSearchContacts, "list_contacts", "get_contact", "list_contact_groups"}
 	writes := []string{"create_contact", "update_contact", "upsert_contact_by_email", toolCreateContactGroup, "modify_contact_group_members"}
 
 	got := map[string]*mcp.Tool{}

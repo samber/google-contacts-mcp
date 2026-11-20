@@ -76,7 +76,7 @@ func legacyRoundTrip(t *testing.T, version string) {
 	}
 
 	var out SearchOutput
-	h.ok("search_contacts", map[string]any{argQuery: "ada"}, &out)
+	h.ok(toolSearchContacts, map[string]any{argQuery: "ada"}, &out)
 
 	if len(out.Contacts) != 1 {
 		t.Errorf("contacts = %+v", out.Contacts)
@@ -105,7 +105,7 @@ func TestStateless_20260728(t *testing.T) {
 	h.session = h.connect("2026-07-28")
 
 	var out SearchOutput
-	h.ok("search_contacts", map[string]any{argQuery: "ada"}, &out)
+	h.ok(toolSearchContacts, map[string]any{argQuery: "ada"}, &out)
 
 	if len(out.Contacts) != 1 {
 		t.Errorf("contacts = %+v", out.Contacts)
