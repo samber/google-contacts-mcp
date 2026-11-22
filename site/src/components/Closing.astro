@@ -9,8 +9,8 @@ import ConnectorUrl from './ConnectorUrl.astro';
   <div class="wrap inner">
     <div class="steps-block">
       <h2 id="connect-title" class="reveal">
-        Connect in one minute.{' '}
-        <span class="soft">No install, no API key.</span>
+        Connect Google Contacts to Claude or ChatGPT.{' '}
+        <span class="soft">One minute, no install, no API key.</span>
       </h2>
       <ol class="steps">
         <li class="reveal">
@@ -33,8 +33,11 @@ import ConnectorUrl from './ConnectorUrl.astro';
       </ol>
     </div>
     <div class="oss reveal">
-      <h2 class="oss-title">Open source. Run your own if you prefer.</h2>
-      <p>Anyone can read the code that touches your contacts. Developers can run their own copy.</p>
+      <h2 class="oss-title">An open source MCP server. Run your own if you prefer.</h2>
+      <p>
+        It speaks the Model Context Protocol (MCP) and runs remotely, so there is nothing to install. Anyone can read
+        the code that touches your contacts. Developers can run their own copy.
+      </p>
       <a class="button mint" href={REPO_URL}>Source code on GitHub</a>
     </div>
   </div>
