@@ -1,5 +1,5 @@
 ---
-import { OPERATOR_EMAIL, OPERATOR_LINKEDIN, OPERATOR_NAME, REPO_URL } from '../data/site';
+import { OPERATOR_EMAIL, OPERATOR_LINKEDIN, OPERATOR_NAME, REPO_URL, SECURITY_URL, SELF_HOSTING_URL } from '../data/site';
 ---
 
 <footer class="site-footer">
@@ -12,6 +12,8 @@ import { OPERATOR_EMAIL, OPERATOR_LINKEDIN, OPERATOR_NAME, REPO_URL } from '../d
       <li><a href="/privacy">Privacy policy</a></li>
       <li><a href="/terms">Terms of service</a></li>
       <li><a href={REPO_URL}>GitHub</a></li>
+      <li><a href={SELF_HOSTING_URL}>Self-hosting</a></li>
+      <li><a href={SECURITY_URL}>Security</a></li>
     </ul>
   </div>
 </footer>
