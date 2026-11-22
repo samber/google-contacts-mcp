@@ -1,8 +1,8 @@
-# google-contacts-mcp
+# Google Contacts MCP
 
 Connect Claude or ChatGPT to your Google Contacts. Your assistant can then search, read, create, update, enrich and label your contacts, and keep your address book up to date from the e-mail signatures you receive.
 
-`google-contacts-mcp` is a remote [MCP](https://modelcontextprotocol.io) server. Users install nothing: they add one URL as a connector in their assistant, approve two consent screens (this server's, then Google's), and they are done. One instance serves many Google accounts, each isolated from the others.
+`google-contacts-mcp` is a **remote** [MCP](https://modelcontextprotocol.io) server. One instance serves many Google accounts, each isolated from the others.
 
 Your contacts never touch the server's disk. Every tool call reads or writes Google directly, and the server keeps only what it needs to keep you signed in.
 

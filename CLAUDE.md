@@ -25,22 +25,24 @@
 
 ## Gates
 
-Run all four before every commit:
+Run all four before every commit. `Makefile` has no `gofmt` or `vet` target; run those directly.
 
 ```sh
 gofmt -l .            # must print nothing
 go vet ./...
-golangci-lint run
-go test -race ./...
+make lint             # golangci-lint run
+make test             # go test -race -v ./...
 ```
+
+Other `make` targets: `build`, `coverage` (writes `cover.out`, `cover.html`), `bench`, `watch-test`, `tools`, `lint-fix`, `audit`, `outdated`, `weight`.
 
 ## CI and automation
 
-- `.github/workflows/ci.yml`: runs the four gates on push to `main` and on every PR. No CI job builds or checks `site/`.
-- `.github/workflows/release.yml`: on a `v*` tag, reruns the gates, then GoReleaser publishes archives and a `ghcr.io` image (amd64, arm64).
-- `.github/dependabot.yml`: Actions and Docker monthly, Go modules weekly, `site/` npm monthly (patch updates ignored, `astro` + `@astrojs/*` grouped). It follows the `samber/ro` config.
-- `.github/FUNDING.yml`: GitHub Sponsors (`samber`) and Ko-fi, same as `samber/ro` and `samber/lo`.
-- Dependabot does not bump the pinned tool versions in the workflows (`golangci-lint` `version:`, `goreleaser` `version:`). Bump them by hand, in both workflows.
+- `.github/workflows/test.yml`: push to `main` and PRs; matrix Go `go.mod` + `stable`; runs `make build`, `make test`, `make coverage`, uploads to Codecov on `stable`.
+- `.github/workflows/lint.yml`: push to `main`, PRs, weekly cron, manual; `golangci-lint-action` with `.golangci.yml`. Version not pinned.
+- `.github/workflows/security.yml`: push to `main`, PRs, weekly cron, manual; Bearer, CodeQL, two Trivy jobs (`.trivyignore` referenced, file missing). `govulncheck` job commented out.
+- `.github/workflows/release.yml`: on a `v*` tag, reruns gofmt, vet, golangci-lint, `go test -race`, then GoReleaser (`.goreleaser.yaml`) publishes archives and a `ghcr.io` image (amd64, arm64).
+- `.github/workflows/dependabot-automerge.yaml`: auto-merge (squash) of Dependabot `github_actions` PRs only.
 
 ## Domain jargon
 
