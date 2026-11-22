@@ -14,6 +14,7 @@ import latinFontUrl from '@fontsource-variable/schibsted-grotesk/files/schibsted
 const POSTHOG_KEY = 'phc_wDDVmAjuZPAoCvfzvattNMFQstZXS2jJBQeCxBhUN4iC';
 const POSTHOG_HOST = 'https://hogpost.samber.dev';
 // Ahrefs Web Analytics; the key is public. Production builds only.
+// Google Tag Manager is also production only; all three load after the window load event.
 const AHREFS_SRC = 'https://analytics.ahrefs.com/analytics.js';
 const AHREFS_KEY = 'ZlVVDleFCGZPB8Nd2KkKrw';
 const GTM_SRC = 'https://www.googletagmanager.com/gtm.js?id=GTM-TQ9RT3C6';
@@ -80,24 +81,28 @@ const image = new URL(ogImage, SITE_URL).href;
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={image} />
     <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
-    <!-- Google Tag Manager container, as supplied by the owner. -->
-    <script is:inline async src={GTM_SRC}></script>
-    <script is:inline>
-      window.dataLayer = window.dataLayer || [];
-      function gtag() {
-        dataLayer.push(arguments);
-      }
-      gtag('js', new Date());
-    </script>
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     {
       import.meta.env.PROD && (
-        <>
-          <link rel="preconnect" href={POSTHOG_HOST} />
-          <script is:inline define:vars={{ posthogKey: POSTHOG_KEY, posthogHost: POSTHOG_HOST }}>
-            {`!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);posthog.init(posthogKey,{api_host:posthogHost,disable_session_recording:true})`}
-          </script>
-          <script is:inline src={AHREFS_SRC} data-key={AHREFS_KEY} async></script>
-        </>
+        <script
+          is:inline
+          define:vars={{
+            gtmSrc: GTM_SRC,
+            posthogKey: POSTHOG_KEY,
+            posthogHost: POSTHOG_HOST,
+            ahrefsSrc: AHREFS_SRC,
+            ahrefsKey: AHREFS_KEY,
+          }}
+        >
+          {`function initPostHog() {
+  if (!window.posthog) return;
+  posthog.init(posthogKey, {
+    api_host: posthogHost,
+    disable_session_recording: true,
+  });
+}
+function loadScript(src,attrs,onload){var el=document.createElement('script');el.async=true;el.src=src;el.onload=onload;for(var name in attrs)el.setAttribute(name,attrs[name]);document.head.appendChild(el)}function loadAnalytics(){window.dataLayer=window.dataLayer||[];window.dataLayer.push({'gtm.start':Date.now(),event:'gtm.js'});loadScript(gtmSrc);loadScript(posthogHost+'/static/array.js',0,initPostHog);loadScript(ahrefsSrc,{'data-key':ahrefsKey})}function whenIdle(){'requestIdleCallback'in window?requestIdleCallback(loadAnalytics):setTimeout(loadAnalytics,0)}document.readyState==='complete'?whenIdle():addEventListener('load',whenIdle)`}
+        </script>
       )
     }
     <slot name="head" />
@@ -109,5 +114,15 @@ const image = new URL(ogImage, SITE_URL).href;
       <slot />
     </main>
     <Footer />
+    <script>
+      import { trackEvent } from '../scripts/analytics.ts';
+
+      const GITHUB_LINK_SELECTOR = 'a[href^="https://github.com/"]';
+
+      // One delegated listener covers every GitHub link on the page.
+      document.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest(GITHUB_LINK_SELECTOR)) trackEvent('github_click');
+      });
+    </script>
   </body>
 </html>
