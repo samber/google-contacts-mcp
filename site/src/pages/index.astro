@@ -2,36 +2,88 @@
 import ChatDemo from '../components/ChatDemo.astro';
 import Closing from '../components/Closing.astro';
 import ConnectorUrl from '../components/ConnectorUrl.astro';
+import Faq from '../components/Faq.astro';
 import Features from '../components/Features.astro';
+import HowDiffers from '../components/HowDiffers.astro';
 import StoredCards from '../components/StoredCards.astro';
 import Base from '../layouts/Base.astro';
-import { OPERATOR_NAME, REPO_URL, SITE_URL } from '../data/site';
+import {
+  FAQ,
+  OPERATOR_GITHUB,
+  OPERATOR_LINKEDIN,
+  OPERATOR_NAME,
+  REPO_URL,
+  SELF_HOSTING_URL,
+  SITE_NAME,
+  SITE_SUMMARY,
+  SITE_URL,
+  TOOLS,
+} from '../data/site';
 
-// Structured data for search engines and assistants. It makes no claim about who can
-// sign up (no "offers" or availability), since access may be limited.
+// One @graph, linked by @id: the site, the software, its operator and the FAQ. The FAQ comes
+// from the same array as the visible section, so the markup cannot drift from the page.
+// BusinessApplication: the closest schema.org category for a tool that manages contacts for work.
+const PERSON_ID = `${SITE_URL}/#operator`;
 const structuredData = {
   '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  name: 'Google Contacts MCP',
-  description:
-    'A remote MCP server that lets Claude and ChatGPT search, read, create and enrich your Google Contacts, with your consent.',
-  applicationCategory: 'BusinessApplication',
-  operatingSystem: 'Web',
-  url: SITE_URL,
-  isAccessibleForFree: true,
-  author: { '@type': 'Person', name: OPERATOR_NAME },
-  sameAs: [REPO_URL],
+  '@graph': [
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE_URL}/#website`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      inLanguage: 'en',
+      publisher: { '@id': PERSON_ID },
+      about: { '@id': `${SITE_URL}/#software` },
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': `${SITE_URL}/#software`,
+      name: SITE_NAME,
+      alternateName: 'Google Contacts MCP server',
+      description: SITE_SUMMARY,
+      applicationCategory: 'BusinessApplication',
+      operatingSystem: 'Web',
+      url: SITE_URL,
+      image: `${SITE_URL}/og.png`,
+      isAccessibleForFree: true,
+      // The hosted service costs nothing and the source is MIT.
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      license: 'https://opensource.org/license/mit',
+      softwareHelp: { '@type': 'WebPage', url: SELF_HOSTING_URL },
+      // One feature per MCP tool, from the same list the page and the gate use.
+      featureList: TOOLS.map((tool) => `${tool.name}: ${tool.summary}`),
+      author: { '@id': PERSON_ID },
+      sameAs: [REPO_URL],
+    },
+    {
+      '@type': 'Person',
+      '@id': PERSON_ID,
+      name: OPERATOR_NAME,
+      url: OPERATOR_GITHUB,
+      sameAs: [OPERATOR_GITHUB, OPERATOR_LINKEDIN],
+    },
+    {
+      '@type': 'FAQPage',
+      '@id': `${SITE_URL}/#faq`,
+      mainEntity: FAQ.map(({ question, answer }) => ({
+        '@type': 'Question',
+        name: question,
+        acceptedAnswer: { '@type': 'Answer', text: answer },
+      })),
+    },
+  ],
 };
 
 // The headline's first sentence, one span per word for the waterfall entrance.
 // The last HIGHLIGHT_WORDS words get the gradient sweep.
-const HEADLINE = 'Your assistant keeps your address book up to date.'.split(' ');
+const HEADLINE = 'Your assistant keeps your Google Contacts up to date.'.split(' ');
 const HIGHLIGHT_WORDS = 3;
 ---
 
 <Base
-  title="Google Contacts MCP: let Claude and ChatGPT manage your contacts"
-  description="Connect Claude or ChatGPT to your Google Contacts: search, create and enrich contacts by talking to your assistant."
+  title="Google Contacts MCP server for Claude and ChatGPT"
+  description="Free, open source Google Contacts MCP server for Claude and ChatGPT. Search, create and enrich contacts in plain language. No contact data stored."
   path="/"
 >
   <script slot="head" type="application/ld+json" set:html={JSON.stringify(structuredData)} />
@@ -55,9 +107,9 @@ const HIGHLIGHT_WORDS = 3;
               ))
             }
           </span>
-          <span class="soft">Claude and ChatGPT search, create and enrich your Google Contacts.</span>
+          <span class="soft">Claude and ChatGPT search, create and enrich them.</span>
         </h1>
-        <p class="free">Free and open source.</p>
+        <p class="free">A free, open source MCP server. No install.</p>
         <ConnectorUrl id="hero-url" />
       </div>
       <div class="demo">
@@ -67,7 +119,9 @@ const HIGHLIGHT_WORDS = 3;
   </section>
 
   <Features />
+  <HowDiffers />
   <StoredCards />
+  <Faq />
   <Closing />
 </Base>
 
@@ -162,7 +216,7 @@ const HIGHLIGHT_WORDS = 3;
   }
 
   /* Load-in, in reading order (hyperframes "waterfall-entry"): the headline's words
-     whip up one after another, each starting before the previous settles (10 words x
+     whip up one after another, each starting before the previous settles (9 words x
      55 ms keeps the wave under 0.6 s), then the grey line, the URL box and the demo. */
   @media (prefers-reduced-motion: no-preference) {
     .w {

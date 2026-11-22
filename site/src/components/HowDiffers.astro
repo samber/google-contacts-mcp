@@ -1,0 +1,75 @@
+---
+// Three categories, never named products: the comparison must not claim anything about a third party's features.
+const OPTIONS = [
+  {
+    title: 'Self-run MCP servers',
+    text: 'You create a Google Cloud project, set up OAuth credentials and run the server yourself.',
+    ours: false,
+  },
+  {
+    title: 'Automation platforms',
+    text: 'You need an account and an API key, or your own OAuth app, before your assistant can reach your contacts.',
+    ours: false,
+  },
+  {
+    title: 'This server',
+    text: 'Hosted and free. Open source under the MIT license. It writes and enriches contacts, not only reads them. Nothing to install.',
+    ours: true,
+  },
+];
+---
+
+<section class="differs wrap" aria-labelledby="differs-title">
+  <h2 id="differs-title" class="reveal">
+    How this differs.{' '}
+    <span class="soft">Fewer steps between your assistant and your contacts.</span>
+  </h2>
+  <ul class="options">
+    {
+      OPTIONS.map((option) => (
+        <li class:list={['option', 'reveal', { ours: option.ours }]}>
+          <h3>{option.title}</h3>
+          <p class="muted">{option.text}</p>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .differs {
+    display: grid;
+    gap: var(--space-5);
+    padding-block: var(--space-7);
+  }
+
+  .options {
+    display: grid;
+    gap: var(--space-3);
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (min-width: 60rem) {
+    .options {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .option {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    border-radius: var(--radius);
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+
+  /* The product's own card carries the mint accent, as the "kept" card does elsewhere. */
+  .ours {
+    box-shadow:
+      inset 0 3px 0 var(--mint),
+      var(--shadow-lg);
+  }
+</style>

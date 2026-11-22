@@ -38,12 +38,11 @@ node scripts/og.mjs  # regenerate public/og.png by hand when the design changes
 Run `check`, `test`, `build`, `verify` before every commit that touches `site/`.
 
 - `scripts/check-contrast.mjs`: WCAG contrast of the palette tokens, light and dark.
-- `scripts/check-dist.mjs`: built pages, canonical URLs, one `h1`, footer links, no external host, JSON-LD, sitemap, `robots.txt`, `llms.txt`, `og.png`, script under 1 KB gzipped, tool list equal to `internal/tools`, privacy and terms requirements.
+- `scripts/check-dist.mjs`: built pages, canonical URLs, one `h1`, footer links, no external host, JSON-LD, sitemap, `robots.txt`, `llms.txt`, `og.png`, scripts under 1.5 KB gzipped, tool list equal to `internal/tools`, privacy and terms requirements.
 - Lighthouse on `/` and `/privacy` is a manual pre-launch check: target above 90 on all four scores.
 
 ## Rules
 
-- No analytics, no cookies, no third-party request: the privacy policy says so.
 - Facts on the site must match the code: tools (`internal/tools`), what is stored (README, `internal/store`), retention (`internal/jobs`).
 - Example data is fictional. Never the owner's or a real person's data. The only real profile link is the operator's own LinkedIn (`OPERATOR_LINKEDIN`, footer), exempted by name in `check-dist.mjs`; `www.linkedin.com` is on its host allowlist for that link only.
 - The Google app is out of testing mode: anyone with a Google account can connect, so the copy may say so. If that changes, update `/terms` ("Who can use it").

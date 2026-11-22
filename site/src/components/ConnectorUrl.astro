@@ -30,6 +30,7 @@ const { protocol, host, pathname } = new URL(MCP_URL);
 </div>
 
 <script>
+  import { trackEvent } from '../scripts/analytics.ts';
   import { copyText } from '../scripts/copy.ts';
 
   const COPIED_LABEL_MS = 2000;
@@ -43,7 +44,7 @@ const { protocol, host, pathname } = new URL(MCP_URL);
 
     button.hidden = false;
     button.addEventListener('click', async () => {
-      const result = await copyText(url.dataset.url ?? '', navigator.clipboard);
+      const result = await copyText(url.dataset.url ?? '', navigator.clipboard, () => trackEvent('connector_url_copy'));
       if (result === 'copied') {
         status.textContent = 'Copied';
         button.dataset.state = 'copied';

@@ -1,5 +1,6 @@
 ---
 import Base from './Base.astro';
+import { SITE_NAME, SITE_URL } from '../data/site';
 
 type Props = {
   /** Page title and h1, for example "Privacy policy". */
@@ -11,6 +12,14 @@ type Props = {
 };
 
 const { title, description, path, updated } = Astro.props;
+const breadcrumbs = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: SITE_NAME, item: SITE_URL },
+    { '@type': 'ListItem', position: 2, name: title, item: new URL(path, SITE_URL).href },
+  ],
+};
 const displayDate = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-GB', {
   day: 'numeric',
   month: 'long',
@@ -19,7 +28,8 @@ const displayDate = new Date(`${updated}T00:00:00Z`).toLocaleDateString('en-GB',
 });
 ---
 
-<Base title={`${title} | Google Contacts MCP`} description={description} path={path}>
+<Base title={`${title} | ${SITE_NAME}`} description={description} path={path}>
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(breadcrumbs)} />
   <div class="wrap legal">
     <header class="title">
       <h1>{title}</h1>

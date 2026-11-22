@@ -1,5 +1,5 @@
 ---
-import { REPO_URL } from '../data/site';
+import { REPO_URL, SECURITY_URL, SELF_HOSTING_URL } from '../data/site';
 import ConnectorUrl from './ConnectorUrl.astro';
 ---
 
@@ -9,8 +9,8 @@ import ConnectorUrl from './ConnectorUrl.astro';
   <div class="wrap inner">
     <div class="steps-block">
       <h2 id="connect-title" class="reveal">
-        Connect in one minute.{' '}
-        <span class="soft">No install, no API key.</span>
+        Connect Google Contacts to Claude or ChatGPT.{' '}
+        <span class="soft">One minute, no install, no API key.</span>
       </h2>
       <ol class="steps">
         <li class="reveal">
@@ -23,19 +23,27 @@ import ConnectorUrl from './ConnectorUrl.astro';
           <h3>Add it to your assistant</h3>
           <p>
             Claude: Settings, Connectors, Add custom connector.<br />
-            ChatGPT: turn on developer mode, then Create app.
+            ChatGPT: turn on developer mode, then Create app.<br />
+            Leave the OAuth client ID and secret fields empty. On Claude Team and Enterprise, an owner may have to add
+            the connector first.
           </p>
         </li>
         <li class="reveal">
           <h3>Sign in with Google</h3>
-          <p>Approve access to your contacts. You can revoke it at any time from your Google account.</p>
+          <p>Approve access to your contacts and keep the contacts box ticked: the connection fails without it. You can revoke it at any time from your Google account.</p>
         </li>
       </ol>
     </div>
     <div class="oss reveal">
-      <h2 class="oss-title">Open source. Run your own if you prefer.</h2>
-      <p>Anyone can read the code that touches your contacts. Developers can run their own copy.</p>
+      <h2 class="oss-title">An open source MCP server. Run your own if you prefer.</h2>
+      <p>
+        It speaks the Model Context Protocol (MCP) and runs remotely, so there is nothing to install. Anyone can read
+        the code that touches your contacts. Developers can run their own copy.
+      </p>
       <a class="button mint" href={REPO_URL}>Source code on GitHub</a>
+      <p class="doc-links">
+        <a href={SELF_HOSTING_URL}>Self-hosting guide</a> · <a href={SECURITY_URL}>Security notes</a>
+      </p>
     </div>
   </div>
 </section>
@@ -199,6 +207,11 @@ import ConnectorUrl from './ConnectorUrl.astro';
     border: 1px solid rgb(255 255 255 / 0.12);
     border-radius: var(--radius);
     background: rgb(255 255 255 / 0.05);
+  }
+
+  .doc-links a {
+    color: var(--on-navy);
+    text-decoration: underline;
   }
 
   .oss-title {

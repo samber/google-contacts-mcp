@@ -32,6 +32,32 @@ test('copyText reports "unavailable" when writeText throws synchronously', async
   assert.equal(await copyText(URL_TO_COPY, clipboard), 'unavailable');
 });
 
+test('copyText calls onCopied once after a successful write', async () => {
+  let calls = 0;
+  const clipboard = { writeText: async () => {} };
+
+  assert.equal(await copyText(URL_TO_COPY, clipboard, () => calls++), 'copied');
+  assert.equal(calls, 1);
+});
+
+test('copyText does not call onCopied when the write is refused or the API is missing', async () => {
+  let calls = 0;
+  const refusing = { writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) };
+
+  await copyText(URL_TO_COPY, refusing, () => calls++);
+  await copyText(URL_TO_COPY, undefined, () => calls++);
+  assert.equal(calls, 0);
+});
+
+test('copyText still reports "copied" when onCopied throws', async () => {
+  const clipboard = { writeText: async () => {} };
+  const onCopied = () => {
+    throw new Error('hook failed');
+  };
+
+  assert.equal(await copyText(URL_TO_COPY, clipboard, onCopied), 'copied');
+});
+
 test('copyText reports "unavailable" when there is no clipboard API', async () => {
   assert.equal(await copyText(URL_TO_COPY, undefined), 'unavailable');
 });

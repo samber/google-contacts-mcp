@@ -45,6 +45,12 @@ const ALLOWED_HOSTS = new Set([
   'modelcontextprotocol.io',
   // The French data protection authority, named in the privacy policy.
   'www.cnil.fr',
+  // Google Tag Manager, loaded on every page at the owner's request.
+  'www.googletagmanager.com',
+  // PostHog through the owner's first-party proxy, loaded on every page at the owner's request.
+  'hogpost3.samber.dev',
+  // Ahrefs Web Analytics, loaded on every page at the owner's request.
+  'analytics.ahrefs.com',
 ]);
 
 // Google requires this exact sentence in the privacy policy of apps that use its APIs.
@@ -52,8 +58,9 @@ const LIMITED_USE_SENTENCE =
   "This service's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.";
 const GOOGLE_POLICY_URL = 'https://developers.google.com/terms/api-services-user-data-policy';
 
-// Spec: the page script (copy button and card reveal) stays under 1 KB gzipped.
-const MAX_SCRIPT_GZIP_BYTES = 1024;
+// Spec: the page script (copy button and card reveal) stays under 1 KB gzipped. The inline
+// Google Tag Manager and PostHog loaders add about 0.3 KB more, so the cap is 1.5 KB.
+const MAX_SCRIPT_GZIP_BYTES = 1536;
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -136,7 +143,11 @@ if (existsSync(`${DIST}index.html`)) {
     fail('index.html: JSON-LD block is missing');
   } else {
     try {
-      if (JSON.parse(jsonLd)['@type'] !== 'SoftwareApplication') fail('index.html: JSON-LD @type is not SoftwareApplication');
+      // The home page carries one @graph; each node type below must be in it.
+      const types = (JSON.parse(jsonLd)['@graph'] ?? []).map((node) => node['@type']);
+      for (const type of ['SoftwareApplication', 'WebSite', 'Person', 'FAQPage']) {
+        if (!types.includes(type)) fail(`index.html: JSON-LD @graph has no ${type}`);
+      }
     } catch {
       fail('index.html: JSON-LD is not valid JSON');
     }
