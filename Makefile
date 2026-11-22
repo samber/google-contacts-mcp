@@ -1,5 +1,4 @@
 MODULES=$(shell go list -m)
-MODULE_DIRS=$(shell go list -m -f '{{.Dir}}')
 
 build:
 	go build -v ./...
@@ -31,9 +30,9 @@ tools:
 	go mod tidy
 
 lint:
-	golangci-lint run --timeout 60s --max-same-issues 50 ${MODULE_DIRS}
+	golangci-lint run --timeout 60s --max-same-issues 50 ./...
 lint-fix:
-	golangci-lint run --timeout 60s --max-same-issues 50 --fix ${MODULE_DIRS}
+	golangci-lint run --timeout 60s --max-same-issues 50 --fix ./...
 
 audit:
 	go list -json -m all | nancy sleuth
