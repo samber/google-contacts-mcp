@@ -10,6 +10,7 @@
 - Token names in `src/styles/tokens.css` are fixed by `scripts/check-contrast.mjs`: `--red` is the "never kept" red, `--mark` the pale mint for fields the assistant wrote; `--mint` is the solid secondary colour (buttons, badges). The owner rejected yellow.
 - The connector URL box (`ConnectorUrl.astro`) appears twice (hero, closing step 1): give each instance a unique `id`; the copy script binds every `[data-copy-root]`.
 - The header's GitHub star count is fetched once at build time (`src/data/github.ts`); visitors' browsers never call GitHub. It is hidden while the repository is private or the API is unreachable.
+- `public/manifest.json` and the 96/192/512 px PNG icons come from `node scripts/icons.mjs` (reads `public/favicon.svg`). `public/<key>.txt` is the IndexNow key file: its name and content are the same key, and it must stay served at the site root.
 - Logos (Gmail, GitHub) come from the `simple-icons` dev dependency, inlined at build time.
 - Check every visual change in a real browser before reporting it: `astro preview`, then screenshots. Gates do not catch white text on white cards or missing spaces before inline spans (`{' '}`).
 - Example people and companies (Camille Durand, Halvard Robotics, `*.example` domains) are fictional. Tool arguments shown in demos must match the JSON names in `internal/tools/handlers.go`.

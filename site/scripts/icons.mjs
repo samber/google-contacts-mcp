@@ -11,6 +11,10 @@ const APPLE_OUT = fileURLToPath(new URL('../public/apple-touch-icon.png', import
 
 const ICO_SIZE = 32;
 const APPLE_SIZE = 180;
+// 96 px is the size search engines ask for; 192 and 512 are the sizes Android installability requires.
+const FAVICON_PNG_SIZE = 96;
+const MANIFEST_SMALL_SIZE = 192;
+const MANIFEST_LARGE_SIZE = 512;
 // The SVG is 32x32 units: render at a high density so the downscale stays sharp.
 const SVG_UNITS = 32;
 // iOS fills transparent pixels with black, so the touch icon gets an opaque white ground.
@@ -49,3 +53,16 @@ console.log(`wrote ${ICO_OUT}`);
 
 await render(APPLE_SIZE).flatten({ background: APPLE_BACKGROUND }).png().toFile(APPLE_OUT);
 console.log(`wrote ${APPLE_OUT}`);
+
+// PNG fallback for browsers that skip the SVG icon, and the icons the web manifest lists.
+// Manifest icons get the opaque ground too: Android masks and fills transparent pixels unpredictably.
+for (const { file, size, opaque } of [
+  { file: 'favicon-96x96.png', size: FAVICON_PNG_SIZE, opaque: false },
+  { file: 'web-app-manifest-192x192.png', size: MANIFEST_SMALL_SIZE, opaque: true },
+  { file: 'web-app-manifest-512x512.png', size: MANIFEST_LARGE_SIZE, opaque: true },
+]) {
+  const out = fileURLToPath(new URL(`../public/${file}`, import.meta.url));
+  const image = render(size);
+  await (opaque ? image.flatten({ background: APPLE_BACKGROUND }) : image).png().toFile(out);
+  console.log(`wrote ${out}`);
+}
