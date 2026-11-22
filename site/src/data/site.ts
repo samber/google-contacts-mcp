@@ -1,6 +1,13 @@
 /** Public origin of the website; canonical URLs and the sitemap derive from it. */
 export const SITE_URL = 'https://google-contacts-mcp.samber.dev';
 
+/** Product name, shown in titles, structured data and llms.txt. */
+export const SITE_NAME = 'Google Contacts MCP';
+
+/** One-sentence description of the service, reused by structured data and llms.txt. */
+export const SITE_SUMMARY =
+  'A remote MCP server that lets Claude and ChatGPT search, read, create and enrich your Google Contacts, with your consent.';
+
 /** Connector URL users paste into Claude or ChatGPT: the MCP server's endpoint. */
 export const MCP_URL = 'https://mcp.google-contacts-mcp.samber.dev/mcp';
 

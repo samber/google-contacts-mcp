@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
+import { LEGAL_UPDATED } from './src/data/site.ts';
 
 // SITE is the public origin; Astro builds canonical URLs and the sitemap from it.
 const SITE = 'https://google-contacts-mcp.samber.dev';
@@ -11,7 +12,16 @@ export default defineConfig({
   // the privacy URL registered with Google must stay valid.
   trailingSlash: 'never',
   build: { format: 'file' },
-  integrations: [sitemap()],
+  integrations: [
+    sitemap({
+      // Only the legal pages have a known change date; the home page gets none rather than a build date that would claim fresh content on every build.
+      serialize(item) {
+        const path = new URL(item.url).pathname;
+        if (path === '/privacy' || path === '/terms') item.lastmod = LEGAL_UPDATED;
+        return item;
+      },
+    }),
+  ],
   vite: {
     build: {
       // The default minifier folds `animation` + `animation-timeline: view()` into one

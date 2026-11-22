@@ -5,22 +5,37 @@ import ConnectorUrl from '../components/ConnectorUrl.astro';
 import Features from '../components/Features.astro';
 import StoredCards from '../components/StoredCards.astro';
 import Base from '../layouts/Base.astro';
-import { OPERATOR_NAME, REPO_URL, SITE_URL } from '../data/site';
+import { OPERATOR_NAME, REPO_URL, SITE_NAME, SITE_SUMMARY, SITE_URL, TOOLS } from '../data/site';
 
 // Structured data for search engines and assistants. It makes no claim about who can
 // sign up (no "offers" or availability), since access may be limited.
 const structuredData = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
-  name: 'Google Contacts MCP',
-  description:
-    'A remote MCP server that lets Claude and ChatGPT search, read, create and enrich your Google Contacts, with your consent.',
+  '@id': `${SITE_URL}/#software`,
+  name: SITE_NAME,
+  description: SITE_SUMMARY,
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web',
   url: SITE_URL,
+  image: `${SITE_URL}/og.png`,
   isAccessibleForFree: true,
+  license: 'https://opensource.org/license/mit',
+  // One feature per MCP tool, from the same list the page and the gate use.
+  featureList: TOOLS.map((tool) => `${tool.name}: ${tool.summary}`),
   author: { '@type': 'Person', name: OPERATOR_NAME },
   sameAs: [REPO_URL],
+};
+
+// Names the site itself, so search engines show "Google Contacts MCP" as the site name.
+const websiteData = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  '@id': `${SITE_URL}/#website`,
+  name: SITE_NAME,
+  url: SITE_URL,
+  inLanguage: 'en',
+  about: { '@id': `${SITE_URL}/#software` },
 };
 
 // The headline's first sentence, one span per word for the waterfall entrance.
@@ -31,10 +46,11 @@ const HIGHLIGHT_WORDS = 3;
 
 <Base
   title="Google Contacts MCP: let Claude and ChatGPT manage your contacts"
-  description="Connect Claude or ChatGPT to your Google Contacts: search, create and enrich contacts by talking to your assistant."
+  description="Connect Claude or ChatGPT to your Google Contacts in one minute. Search, create and enrich contacts by talking to your assistant. Free, open source, no contact data stored."
   path="/"
 >
   <script slot="head" type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify(websiteData)} />
   <section class="hero" aria-labelledby="hero-title">
     <!-- Decorative: the logo's colours swirling slowly inside a diagonal band. -->
     <div class="ribbon" aria-hidden="true"><div class="swirl"></div></div>

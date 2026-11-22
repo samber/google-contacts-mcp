@@ -4,7 +4,22 @@ import '../styles/tokens.css';
 import '../styles/global.css';
 import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
-import { SITE_URL } from '../data/site';
+import { SITE_NAME, SITE_URL } from '../data/site';
+
+// PostHog, configured like the samber/ro docs: first-party proxy host, no session recording.
+// The key is a public, write-only project key. Production builds only.
+const POSTHOG_KEY = 'phc_wDDVmAjuZPAoCvfzvattNMFQstZXS2jJBQeCxBhUN4iC';
+const POSTHOG_HOST = 'https://hogpost.samber.dev';
+const GTM_SRC = 'https://www.googletagmanager.com/gtm.js?id=GTM-TQ9RT3C6';
+// Lets search engines show full-size image previews and unbounded snippets.
+const INDEX_DIRECTIVES = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
+// Browser chrome colours; equal to --desk in tokens.css, light and dark.
+const THEME_LIGHT = '#ffffff';
+const THEME_DARK = '#0a1424';
+// public/og.png is rendered at this size by scripts/og.mjs.
+const OG_IMAGE_WIDTH = 1200;
+const OG_IMAGE_HEIGHT = 630;
+const OG_IMAGE_ALT = 'Google Contacts MCP: let Claude and ChatGPT manage your Google Contacts.';
 
 type Props = {
   title: string;
@@ -29,15 +44,54 @@ const image = new URL(ogImage, SITE_URL).href;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    {
+      noindex ? (
+        <meta name="robots" content="noindex" />
+      ) : (
+        <>
+          <link rel="canonical" href={canonical} />
+          <meta name="robots" content={INDEX_DIRECTIVES} />
+        </>
+      )
+    }
+    <meta name="theme-color" content={THEME_LIGHT} media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content={THEME_DARK} media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="Summary for AI assistants" />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Google Contacts MCP" />
+    <meta property="og:site_name" content={SITE_NAME} />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={image} />
+    <meta property="og:image:width" content={String(OG_IMAGE_WIDTH)} />
+    <meta property="og:image:height" content={String(OG_IMAGE_HEIGHT)} />
+    <meta property="og:image:alt" content={OG_IMAGE_ALT} />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={image} />
+    <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
+    <!-- Google Tag Manager container, as supplied by the owner. -->
+    <script is:inline async src={GTM_SRC}></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag('js', new Date());
+    </script>
+    {
+      import.meta.env.PROD && (
+        <>
+          <link rel="preconnect" href={POSTHOG_HOST} />
+          <script is:inline define:vars={{ posthogKey: POSTHOG_KEY, posthogHost: POSTHOG_HOST }}>
+            {`!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="capture identify alias people.set people.set_once set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getActiveMatchingSurveys getSurveys onSessionId".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);posthog.init(posthogKey,{api_host:posthogHost,disable_session_recording:true})`}
+          </script>
+        </>
+      )
+    }
     <slot name="head" />
   </head>
   <body>
