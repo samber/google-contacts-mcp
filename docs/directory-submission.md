@@ -70,7 +70,7 @@ The OpenAI listing is named `Contacts for Google`, which avoids a bare dictionar
 
 Package rules worth remembering: one remote MCP server, no `headers`, no credentials in the ZIP, no `.app.json`. The MCP URL cannot change through the update flow, so the host stays `mcp.google-contacts-mcp.samber.dev`. A change to the package needs a new `version` in `plugin/openai/plugin.json`.
 
-`publication.countries` is `US`, `GB`, `FR`, `DE`. Widen it in `plugin.json` when the service should be available elsewhere. Projects with EU data residency cannot submit MCP plugins today.
+`publication.countries` lists all 249 ISO 3166-1 alpha-2 codes, so the plugin is available everywhere OpenAI allows. Remove codes from `plugin.json` to restrict it. Projects with EU data residency cannot submit MCP plugins today.
 
 ### Test cases
 
