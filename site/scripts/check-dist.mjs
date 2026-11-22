@@ -48,7 +48,7 @@ const ALLOWED_HOSTS = new Set([
   // Google Tag Manager, loaded on every page at the owner's request.
   'www.googletagmanager.com',
   // PostHog through the owner's first-party proxy, loaded on every page at the owner's request.
-  'hogpost.samber.dev',
+  'hogpost3.samber.dev',
   // Ahrefs Web Analytics, loaded on every page at the owner's request.
   'analytics.ahrefs.com',
 ]);
