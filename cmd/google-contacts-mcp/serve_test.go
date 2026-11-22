@@ -95,7 +95,8 @@ func startServe(t *testing.T, cfg config.Config) (lines <-chan logLine, stop fun
 		select {
 		case err := <-done:
 			// Drain the pipe so the logger never blocks on a full channel.
-			for range out { //nolint:revive // drain only
+			for l := range out {
+				_ = l
 			}
 
 			return err
