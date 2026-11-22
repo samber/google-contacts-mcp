@@ -653,14 +653,15 @@ func (s *Server) takePending(ctx context.Context, id string) (*pending, *page) {
 }
 
 func (s *Server) setCSRFCookie(w http.ResponseWriter, value string, maxAge int) {
-	// Secure is false only for an http://localhost or http://127.0.0.1 base URL, where browsers drop Secure cookies.
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure follows the base URL scheme, see above
+	// Always Secure. Browsers still accept Secure cookies on http://localhost
+	// (a secure context), except Safari, which drops them on plain http.
+	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    value,
 		Path:     cookiePath,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   s.secureCookie,
+		Secure:   true,
 		// Lax, not Strict: the cookie must come back on Google's top-level
 		// redirect to the callback.
 		SameSite: http.SameSiteLaxMode,

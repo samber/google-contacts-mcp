@@ -49,9 +49,11 @@ function pngToIco(png, size) {
 
 const icoPng = await render(ICO_SIZE).png().toBuffer();
 writeFileSync(ICO_OUT, pngToIco(icoPng, ICO_SIZE));
+// bearer:disable javascript_lang_logger_leak
 console.log(`wrote ${ICO_OUT}`);
 
 await render(APPLE_SIZE).flatten({ background: APPLE_BACKGROUND }).png().toFile(APPLE_OUT);
+// bearer:disable javascript_lang_logger_leak
 console.log(`wrote ${APPLE_OUT}`);
 
 // PNG fallback for browsers that skip the SVG icon, and the icons the web manifest lists.
@@ -64,5 +66,6 @@ for (const { file, size, opaque } of [
   const out = fileURLToPath(new URL(`../public/${file}`, import.meta.url));
   const image = render(size);
   await (opaque ? image.flatten({ background: APPLE_BACKGROUND }) : image).png().toFile(out);
+  // bearer:disable javascript_lang_logger_leak
   console.log(`wrote ${out}`);
 }

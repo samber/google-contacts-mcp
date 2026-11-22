@@ -73,4 +73,5 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${
 </svg>`;
 
 await sharp(Buffer.from(svg)).png().toFile(OUT);
+// bearer:disable javascript_lang_logger_leak
 console.log(`wrote ${OUT}`);

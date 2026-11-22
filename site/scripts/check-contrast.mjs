@@ -59,7 +59,9 @@ for (const [theme, block] of Object.entries(palettes)) {
 }
 
 if (failures.length > 0) {
+  // bearer:disable javascript_lang_logger_leak
   console.error(`${failures.length} contrast check(s) failed:`);
+  // bearer:disable javascript_lang_logger_leak
   for (const message of failures) console.error(`  - ${message}`);
   process.exit(1);
 }

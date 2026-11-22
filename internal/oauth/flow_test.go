@@ -1034,7 +1034,7 @@ func TestConsentPage_EscapesClientName(t *testing.T) {
 	}
 }
 
-func TestConsentCookie_InsecureOnLocalhost(t *testing.T) {
+func TestConsentCookie_SecureOnLocalhost(t *testing.T) {
 	t.Parallel()
 
 	e := newEnv(t)
@@ -1043,8 +1043,8 @@ func TestConsentCookie_InsecureOnLocalhost(t *testing.T) {
 	params.Set("resource", "http://localhost:8080/mcp")
 
 	cp := e.authorize(params)
-	if cp.cookie.Secure {
-		t.Error("cookie Secure on http://localhost base URL")
+	if !cp.cookie.Secure {
+		t.Error("cookie not Secure on http://localhost base URL")
 	}
 }
 

@@ -104,7 +104,6 @@ type Server struct {
 	resource       string
 	enableDCR      bool
 	allowedDomains []string
-	secureCookie   bool
 }
 
 // New builds a Server from the validated configuration.
@@ -138,8 +137,6 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		resource:       issuer + mcpPath,
 		enableDCR:      cfg.EnableDCR,
 		allowedDomains: cfg.AllowedDomains,
-		// config only allows plain http for localhost and 127.0.0.1.
-		secureCookie: cfg.BaseURL.Scheme == "https",
 	}
 	if s.log == nil {
 		s.log = slog.Default()

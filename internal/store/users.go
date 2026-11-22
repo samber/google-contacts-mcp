@@ -582,7 +582,8 @@ func (s *Store) hasNoGoogleToken(ctx context.Context, tx *sql.Tx, userID string)
 // InactiveUsers lists users last seen strictly before the cutoff.
 func (s *Store) InactiveUsers(ctx context.Context, before time.Time) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+userColumns+` FROM users WHERE last_seen_at < ? ORDER BY last_seen_at`, before.Unix())
+		// Literal column list (same order as userColumns): no string concatenation in SQL.
+		`SELECT id, google_sub, email, created_at, last_seen_at FROM users WHERE last_seen_at < ? ORDER BY last_seen_at`, before.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("store: inactive users: %w", err)
 	}

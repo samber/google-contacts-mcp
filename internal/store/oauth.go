@@ -171,6 +171,7 @@ func (s *Store) ClientByID(ctx context.Context, id string) (*OAuthClient, error)
 
 // DeleteClient removes a client row; a missing row is not an error.
 func (s *Store) DeleteClient(ctx context.Context, id string) error {
+	// bearer:disable go_gosec_sql_concat_sqli
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM oauth_clients WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: delete client: %w", err)
 	}
@@ -651,22 +652,33 @@ func (s *Store) TakePending(ctx context.Context, id string) ([]byte, error) {
 func (s *Store) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
 	total := 0
 
-	for _, table := range []string{"oauth_tokens", "pending_authorizations"} {
-		// table comes from the fixed list above, never from input.
-		res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at < ?`, now.Unix()) // #nosec G202
-		if err != nil {
-			return total, fmt.Errorf("store: delete expired %s: %w", table, err)
-		}
-
-		n, err := rowsAffected(res, "delete expired "+table)
-		if err != nil {
-			return total, err
-		}
-
-		total += n
+	// Two literal statements, not a table name concatenated into SQL, so static
+	// analysers see that no input reaches the query text.
+	// bearer:disable go_gosec_sql_concat_sqli
+	res, err := s.db.ExecContext(ctx, `DELETE FROM oauth_tokens WHERE expires_at < ?`, now.Unix())
+	if err != nil {
+		return total, fmt.Errorf("store: delete expired oauth_tokens: %w", err)
 	}
 
-	return total, nil
+	n, err := rowsAffected(res, "delete expired oauth_tokens")
+	if err != nil {
+		return total, err
+	}
+
+	total += n
+
+	// bearer:disable go_gosec_sql_concat_sqli
+	res, err = s.db.ExecContext(ctx, `DELETE FROM pending_authorizations WHERE expires_at < ?`, now.Unix())
+	if err != nil {
+		return total, fmt.Errorf("store: delete expired pending_authorizations: %w", err)
+	}
+
+	n, err = rowsAffected(res, "delete expired pending_authorizations")
+	if err != nil {
+		return total, err
+	}
+
+	return total + n, nil
 }
 
 func rowsAffected(res sql.Result, op string) (int, error) {

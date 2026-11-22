@@ -273,7 +273,9 @@ if (!existsSync(`${DIST}llms.txt`)) {
 if (!existsSync(`${DIST}og.png`)) fail('og.png is missing');
 
 if (failures.length > 0) {
+  // bearer:disable javascript_lang_logger_leak
   console.error(`${failures.length} check(s) failed:`);
+  // bearer:disable javascript_lang_logger_leak
   for (const message of failures) console.error(`  - ${message}`);
   process.exit(1);
 }

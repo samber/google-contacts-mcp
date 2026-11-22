@@ -30,6 +30,7 @@ async function requestStarCount(): Promise<number | null> {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
+      // bearer:disable javascript_lang_logger_leak
       console.warn(`[github] star count unavailable: ${REPO_API_URL} answered ${response.status}`);
       return null;
     }
@@ -41,6 +42,7 @@ async function requestStarCount(): Promise<number | null> {
     }
     return stars;
   } catch (error) {
+    // bearer:disable javascript_lang_logger_leak
     console.warn(`[github] star count unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
