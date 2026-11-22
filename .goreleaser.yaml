@@ -30,28 +30,6 @@ archives:
 checksum:
   name_template: checksums.txt
 
-dockers_v2:
-  - id: google-contacts-mcp
-    ids: [google-contacts-mcp]
-    dockerfile: Dockerfile
-    # The "release" stage copies the prebuilt binary instead of compiling.
-    flags:
-      - --target=release
-    images:
-      - ghcr.io/samber/google-contacts-mcp
-    tags:
-      - "{{ .Version }}"
-      - "{{ if not .Prerelease }}latest{{ end }}"
-    platforms:
-      - linux/amd64
-      - linux/arm64
-    labels:
-      org.opencontainers.image.title: "{{ .ProjectName }}"
-      org.opencontainers.image.version: "{{ .Version }}"
-      org.opencontainers.image.revision: "{{ .FullCommit }}"
-      org.opencontainers.image.source: "{{ .GitURL }}"
-      org.opencontainers.image.licenses: MIT
-
 changelog:
   use: github
   sort: asc
