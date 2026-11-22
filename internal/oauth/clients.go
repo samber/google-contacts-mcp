@@ -32,6 +32,12 @@ const (
 	cimdIDPrefix = "https://"
 	// schemeHTTP is allowed for DCR redirect URIs on loopback hosts only (RFC 8252).
 	schemeHTTP = "http"
+	// privateUseSchemeDot is the character a private-use scheme must contain:
+	// RFC 8252 §7.1 requires a reverse domain name such as "com.example.app".
+	// A dotless scheme cannot be javascript, data, file or any other scheme
+	// that browsers or the OS treat as active content, so the dot rule doubles
+	// as the deny-list.
+	privateUseSchemeDot = "."
 
 	// cacheControlNoStore keeps registration responses out of caches.
 	cacheControlNoStore = "no-store"
@@ -302,9 +308,9 @@ func (r *ClientResolver) register(w http.ResponseWriter, req *http.Request) {
 
 	name := in.ClientName
 	if name == "" {
-		// Validated above: the first redirect URI parses and has a host.
+		// Validated above: the first redirect URI parses and is allowed.
 		if u, err := url.Parse(in.RedirectURIs[0]); err == nil {
-			name = u.Hostname()
+			name = redirectDisplayHost(u)
 		}
 	}
 
@@ -381,16 +387,52 @@ func validateRedirectURIs(uris []string) (code, desc string) {
 		}
 
 		u, err := url.Parse(ru)
-		if err != nil || !u.IsAbs() || u.Hostname() == "" || u.Fragment != "" || strings.Contains(ru, "#") {
+		if err != nil || !u.IsAbs() || u.Fragment != "" || strings.Contains(ru, "#") {
 			return errInvalidRedirectURI, fmt.Sprintf("redirect_uri %q must be an absolute URI without fragment", ru)
 		}
 
-		if u.Scheme != schemeHTTPS && (u.Scheme != schemeHTTP || !isLoopbackHost(u.Hostname())) {
-			return errInvalidRedirectURI, fmt.Sprintf("redirect_uri %q must use https, or http on a loopback host", ru)
+		if !isAllowedRedirect(u) {
+			return errInvalidRedirectURI, fmt.Sprintf(
+				"redirect_uri %q must use https, http on a loopback host, or a reverse-domain private-use scheme (RFC 8252 section 7.1) with a path, and no userinfo", ru)
 		}
 	}
 
 	return "", ""
+}
+
+// isAllowedRedirect reports whether u may receive an authorization response:
+// https, http on a loopback host (RFC 8252 §7.3), or a private-use URI scheme
+// (RFC 8252 §7.1). Userinfo and fragments are refused for every kind.
+func isAllowedRedirect(u *url.URL) bool {
+	if u.User != nil || u.Fragment != "" {
+		return false
+	}
+
+	switch u.Scheme {
+	case schemeHTTPS:
+		return u.Hostname() != ""
+	case schemeHTTP:
+		return u.Hostname() != "" && isLoopbackHost(u.Hostname())
+	default:
+		return isPrivateUseRedirect(u)
+	}
+}
+
+// isPrivateUseRedirect reports whether u uses a reverse-domain private-use
+// scheme and carries a host or a path, as in "com.example.app:/callback". An
+// opaque form ("com.example.app:callback") has neither, so it is refused.
+func isPrivateUseRedirect(u *url.URL) bool {
+	return strings.Contains(u.Scheme, privateUseSchemeDot) && u.Opaque == "" && (u.Host != "" || u.Path != "")
+}
+
+// redirectDisplayHost names where a redirect leads, for people: the host, or
+// the scheme for a private-use URI that has none.
+func redirectDisplayHost(u *url.URL) string {
+	if host := u.Hostname(); host != "" {
+		return host
+	}
+
+	return u.Scheme
 }
 
 func (r *ClientResolver) writeError(w http.ResponseWriter, req *http.Request, code, desc string) {

@@ -207,7 +207,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 
 	s.setCSRFCookie(w, csrf, int(pendingTTL/time.Second))
 
-	host := ar.GetRedirectURI().Hostname()
+	host := redirectDisplayHost(ar.GetRedirectURI())
 
 	name := host
 	if pc, ok := ar.GetClient().(*providerClient); ok && pc.name() != "" {
@@ -588,22 +588,12 @@ func (s *Server) domainAllowed(c idClaims) (string, bool) {
 	return emailDomain, slices.Contains(googleConsumerDomains, emailDomain) && slices.Contains(s.allowedDomains, emailDomain)
 }
 
-// safeRedirect accepts only https, or http on a loopback host, without
-// userinfo or fragment: a client document may list javascript: or data: URIs.
+// safeRedirect applies isAllowedRedirect to a raw URI: a client document may
+// list javascript: or data: URIs, which it refuses.
 func safeRedirect(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") || u.Hostname() == "" {
-		return false
-	}
 
-	switch u.Scheme {
-	case schemeHTTPS:
-		return true
-	case schemeHTTP:
-		return isLoopbackHost(u.Hostname())
-	default:
-		return false
-	}
+	return err == nil && !strings.Contains(raw, "#") && isAllowedRedirect(u)
 }
 
 func pickAuthorizeParams(q url.Values) url.Values {

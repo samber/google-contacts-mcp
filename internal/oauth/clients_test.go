@@ -28,6 +28,8 @@ const (
 	testRedirectClaude = "https://claude.ai/cb"
 	// testRedirectLoopback is a registered loopback redirect URI used to exercise port-agnostic matching.
 	testRedirectLoopback = "http://127.0.0.1/callback"
+	// testRedirectNative is a registered private-use scheme redirect URI (RFC 8252 section 7.1).
+	testRedirectNative = "com.example.app:/callback"
 )
 
 // testKey is a fixed keyring entry: the store needs one to open.
@@ -200,6 +202,10 @@ func TestRedirectMatches(t *testing.T) {
 		{"loopback query differs", []string{"http://127.0.0.1/callback"}, "http://127.0.0.1:5000/callback?a=b", false},
 		{"loopback userinfo", []string{"http://127.0.0.1/callback"}, "http://u@127.0.0.1:5000/callback", false},
 		{"non-loopback http port", []string{"http://example.com/cb"}, "http://example.com:81/cb", false},
+		{"private-use exact", []string{testRedirectNative}, testRedirectNative, true},
+		{"private-use path differs", []string{testRedirectNative}, "com.example.app:/other", false},
+		{"private-use scheme differs", []string{testRedirectNative}, "com.example.other:/callback", false},
+		{"private-use query differs", []string{testRedirectNative}, "com.example.app:/callback?a=b", false},
 		{"empty registered", nil, "https://claude.ai/cb", false},
 		{"unparsable", []string{"https://claude.ai/cb"}, "://bad", false},
 	}
@@ -338,7 +344,15 @@ func TestRegister_Rejects(t *testing.T) {
 		{"empty redirect uris", `{"redirect_uris": []}`, errInvalidRedirectURI},
 		{"relative redirect", `{"redirect_uris": ["/cb"]}`, errInvalidRedirectURI},
 		{"http non-loopback", `{"redirect_uris": ["http://app.example.com/cb"]}`, errInvalidRedirectURI},
-		{"custom scheme", `{"redirect_uris": ["myapp://cb"]}`, errInvalidRedirectURI},
+		{"custom scheme without a dot", `{"redirect_uris": ["myapp://cb"]}`, errInvalidRedirectURI},
+		{"javascript scheme", `{"redirect_uris": ["javascript:alert(1)"]}`, errInvalidRedirectURI},
+		{"data scheme", `{"redirect_uris": ["data:text/html,x"]}`, errInvalidRedirectURI},
+		{"file scheme", `{"redirect_uris": ["file:///etc/passwd"]}`, errInvalidRedirectURI},
+		{"private-use opaque", `{"redirect_uris": ["com.example.app:callback"]}`, errInvalidRedirectURI},
+		{"private-use without path", `{"redirect_uris": ["com.example.app:"]}`, errInvalidRedirectURI},
+		{"private-use userinfo", `{"redirect_uris": ["com.example.app://user@host/cb"]}`, errInvalidRedirectURI},
+		{"private-use fragment", `{"redirect_uris": ["com.example.app:/cb#x"]}`, errInvalidRedirectURI},
+		{"https userinfo", `{"redirect_uris": ["https://user@app.example.com/cb"]}`, errInvalidRedirectURI},
 		{"fragment", `{"redirect_uris": ["https://app.example.com/cb#x"]}`, "invalid_redirect_uri"},
 		{"bad application type", `{"redirect_uris": ["https://app.example.com/cb"], "application_type": "service"}`, errInvalidClientMetadata},
 		{"bad grant type", `{"redirect_uris": ["https://app.example.com/cb"], "grant_types": ["client_credentials"]}`, errInvalidClientMetadata},
@@ -361,6 +375,19 @@ func TestRegister_Rejects(t *testing.T) {
 			r := NewClientResolver(openStore(t), NewCIMDFetcher(CIMDOptions{}))
 			assertRegisterError(t, postRegister(t, r, tt.body), tt.wantErr)
 		})
+	}
+}
+
+func TestRegister_PrivateUseSchemeAllowed(t *testing.T) {
+	t.Parallel()
+
+	for _, uri := range []string{testRedirectNative, "com.example.app:///callback", "com.example.app://callback", "io.github.user.app:/oauth2redirect?x=1"} {
+		r := NewClientResolver(openStore(t), NewCIMDFetcher(CIMDOptions{}))
+
+		rec := postRegister(t, r, `{"redirect_uris": ["`+uri+`"]}`)
+		if rec.Code != http.StatusCreated {
+			t.Errorf("%s: status = %d, body %s", uri, rec.Code, rec.Body)
+		}
 	}
 }
 
