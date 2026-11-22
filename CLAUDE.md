@@ -35,7 +35,7 @@ make lint             # golangci-lint run
 make test             # go test -race -v ./...
 ```
 
-Run `make plugin-openai` whenever anything in `plugin/openai/` changes, or a tool name, title or description changes. Bump `version` in `plugin/openai/plugin.json` first: OpenAI rejects a changed package with an old version. Then upload `dist/contacts-for-google-openai-plugin.zip` in the OpenAI portal.
+Run `make plugin-openai` whenever anything in `plugin/openai/` changes, or a tool name, title or description changes. Bump `version` in `plugin/openai/plugin.json` first: OpenAI rejects a changed package with an old version. Then upload `dist/google-contacts-openai-plugin.zip` in the OpenAI portal.
 
 Other `make` targets: `build`, `coverage` (writes `cover.out`, `cover.html`), `bench`, `watch-test`, `tools`, `lint-fix`, `audit`, `outdated`, `weight`.
 

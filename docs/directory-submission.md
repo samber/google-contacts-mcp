@@ -61,12 +61,12 @@ Claude's OAuth callback is `https://claude.ai/api/mcp/auth_callback`. The server
 3. Build the package and upload it:
 
    ```sh
-   make plugin-openai   # writes dist/contacts-for-google-openai-plugin.zip
+   make plugin-openai   # writes dist/google-contacts-openai-plugin.zip
    ```
 
 4. Fix validation findings, fill the review details, submit.
 
-The OpenAI listing is named `Contacts for Google`, which avoids a bare dictionary-style name; the Claude listing is `Google Contacts`.
+Both listings are named `Google Contacts`. Either review may flag that name as generic or as implying affiliation with Google; rename it in `plugin.json` (bump `version`) and in the Claude portal if so.
 
 Package rules worth remembering: one remote MCP server, no `headers`, no credentials in the ZIP, no `.app.json`. The MCP URL cannot change through the update flow, so the host stays `mcp.google-contacts-mcp.samber.dev`. A change to the package needs a new `version` in `plugin/openai/plugin.json`.
 
