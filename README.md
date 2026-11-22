@@ -25,24 +25,22 @@ Connect Claude or ChatGPT to your Google Contacts. Your assistant can then searc
 
 ### 1. Connect Claude and ChatGPT
 
-The connector URL is your base URL followed by `/mcp`, for example `https://mcp.google-contacts-mcp.samber.dev/mcp`.
+The connector URL is `https://mcp.google-contacts-mcp.samber.dev/mcp` (or your own base URL followed by `/mcp`).
 
-**Claude** (claude.ai, Claude Desktop and the mobile apps share connectors):
+**Claude** (claude.ai, Desktop, mobile):
 
-1. Open **Settings > Connectors** and choose **Add custom connector**.
-2. Paste the `/mcp` URL and confirm. Leave the OAuth client id and secret fields empty: Claude registers itself.
-3. Click **Connect**. The server's consent page shows which application asks for access and where you will be sent back. Approve, then pick your Google account and allow access to your contacts. Keep the contacts box ticked: the server refuses the connection without it.
-4. In a conversation, enable the connector from the tools menu and ask, for example, "Find Ada Lovelace in my contacts".
+1. Open **Settings > Connectors**, choose **Add custom connector**, paste the URL. Leave the OAuth client id and secret empty.
+2. Click **Connect**, then approve on the consent page and allow access to your contacts. Keep the contacts box ticked: the server refuses the connection without it.
+3. Enable the connector in a conversation: "Find Ada Lovelace in my contacts".
 
-On Team and Enterprise plans, an owner may have to add the connector for the organization first.
+On Team and Enterprise plans, an owner may have to add the connector first.
 
 **ChatGPT:**
 
-1. Turn on developer mode in **Settings**. Depending on your ChatGPT version, the option sits under **Apps & Connectors > Advanced settings** or on a **Plugins** page.
-2. Choose **Create app** (or **Create**), paste the `/mcp` URL, select OAuth authentication, and save.
-3. Sign in through the same two consent screens as above.
+1. Turn on developer mode in **Settings** (under **Apps & Connectors > Advanced settings** or **Plugins**, depending on your version).
+2. Choose **Create app**, paste the URL, select OAuth, save, then sign in as above.
 
-Which ChatGPT plans can add custom apps changes often, and OpenAI's own help pages disagree with each other. Check OpenAI's current documentation for your plan before you start.
+Available plans change often: check OpenAI's documentation before you start.
 
 ### 2. Scheduled sync from e-mail signatures
 
