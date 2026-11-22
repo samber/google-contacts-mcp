@@ -5,6 +5,9 @@ import '../styles/global.css';
 import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
 import { SITE_NAME, SITE_URL } from '../data/site';
+// Hashed URL of the Latin subset, which holds every glyph the pages use: preloading it
+// starts the font download with the HTML, which improves LCP and avoids a text reflow.
+import latinFontUrl from '@fontsource-variable/schibsted-grotesk/files/schibsted-grotesk-latin-wght-normal.woff2?url';
 
 // PostHog, configured like the samber/ro docs: first-party proxy host, no session recording.
 // The key is a public, write-only project key. Production builds only.
@@ -56,6 +59,7 @@ const image = new URL(ogImage, SITE_URL).href;
     }
     <meta name="theme-color" content={THEME_LIGHT} media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content={THEME_DARK} media="(prefers-color-scheme: dark)" />
+    <link rel="preload" href={latinFontUrl} as="font" type="font/woff2" crossorigin />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="alternate" type="text/plain" href="/llms.txt" title="Summary for AI assistants" />
     <meta property="og:type" content="website" />
