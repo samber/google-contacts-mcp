@@ -21,7 +21,7 @@
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
 - `internal/tools`: MCP server and ten contact tools.
 - `internal/web`: HTTP mux (MCP, OAuth), `GET /` redirect to `--site-url`, `GET /.well-known/openai-apps-challenge` (only with `--openai-apps-challenge`), metrics basic auth. Renders no page.
-- `plugin/openai/`: ChatGPT/Codex plugin package (`plugin.json`, `mcp.json`, one skill, icon); `make plugin-openai` zips it into `dist/`. Submission steps for it and for the Claude connector: `docs/directory-submission.md`.
+- `plugin/openai/`: ChatGPT/Codex plugin package (`plugin.json`, `mcp.json`, icon); `make plugin-openai` zips it into `dist/`. Submission steps for it and for the Claude connector: `docs/directory-submission.md`.
 - `site/`: Astro website (landing page, privacy policy, terms of service) for the hosted instance; own gates and rules in `site/CLAUDE.md`.
 
 ## Gates
