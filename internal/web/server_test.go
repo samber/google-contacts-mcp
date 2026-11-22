@@ -133,6 +133,42 @@ func assertSame404(t *testing.T, got, want response) {
 	}
 }
 
+const testChallenge = "challenge-token-123"
+
+func TestOpenAIChallenge_ServedAsExactPlainText(t *testing.T) {
+	t.Parallel()
+
+	h := newHandler(t, func(c *config.Config) { c.OpenAIAppsChallenge = testChallenge })
+	got := do(t, h, http.MethodGet, "/.well-known/openai-apps-challenge", nil)
+
+	if got.status != http.StatusOK || got.body != testChallenge {
+		t.Errorf("status = %d, body = %q, want 200 and exactly the token", got.status, got.body)
+	}
+
+	if ct := got.header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+}
+
+func TestOpenAIChallenge_UnsetSame404AsUnknown(t *testing.T) {
+	t.Parallel()
+
+	h := newHandler(t, nil)
+	unknown := do(t, h, http.MethodGet, "/no-such-page", nil)
+	challenge := do(t, h, http.MethodGet, "/.well-known/openai-apps-challenge", nil)
+	assertSame404(t, challenge, unknown)
+}
+
+func TestOpenAIChallenge_RejectsOtherMethods(t *testing.T) {
+	t.Parallel()
+
+	h := newHandler(t, func(c *config.Config) { c.OpenAIAppsChallenge = testChallenge })
+
+	if got := do(t, h, http.MethodPost, "/.well-known/openai-apps-challenge", nil); got.status != http.StatusMethodNotAllowed {
+		t.Errorf("POST status = %d, want 405", got.status)
+	}
+}
+
 func TestMetrics_DisabledSame404AsUnknown(t *testing.T) {
 	t.Parallel()
 

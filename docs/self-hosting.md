@@ -60,6 +60,7 @@ Every flag can also be set with an environment variable: `GCMCP_` followed by th
 | `--rate-limit-reads`      | `GCMCP_RATE_LIMIT_READS`      | `120`                                                   | Read tool calls per user per minute.                                                                                                    |
 | `--rate-limit-writes`     | `GCMCP_RATE_LIMIT_WRITES`     | `30`                                                    | Write tool calls per user per minute.                                                                                                   |
 | `--site-url`              | `GCMCP_SITE_URL`              | none                                                    | Website URL. `GET /` redirects to it with a 302. Without it, `/` answers 404. Must be `https`, or `http` on `localhost`.                |
+| `--openai-apps-challenge` | `GCMCP_OPENAI_APPS_CHALLENGE` | none                                                    | OpenAI domain-verification token, served as plain text at `/.well-known/openai-apps-challenge`. Without it, that path answers 404. See [directory submissions](directory-submission.md). |
 
 `rekey` needs only `--db-path` and `GCMCP_ENCRYPTION_KEYS`. `disconnect` also needs the Google client id and secret, to revoke the grant at Google.
 

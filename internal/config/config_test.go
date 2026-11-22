@@ -161,6 +161,57 @@ func TestLoad_SiteURLFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_OpenAIAppsChallenge(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		arg  string
+		want string
+		ok   bool
+	}{
+		"unset":                {arg: "", want: "", ok: true},
+		"token":                {arg: "abc123", want: "abc123", ok: true},
+		"outer whitespace cut": {arg: "  abc123\n", want: "abc123", ok: true},
+		"inner space":          {arg: "abc 123", ok: false},
+		"inner newline":        {arg: "abc\n123", ok: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := Load(CmdServe, withArgs("--openai-apps-challenge="+tc.arg), envFunc(nil))
+			if !tc.ok {
+				if err == nil || !strings.Contains(err.Error(), "openai-apps-challenge") {
+					t.Errorf("err = %v, want error naming openai-apps-challenge", err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+
+			if cfg.OpenAIAppsChallenge != tc.want {
+				t.Errorf("OpenAIAppsChallenge = %q, want %q", cfg.OpenAIAppsChallenge, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoad_OpenAIAppsChallengeFromEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(CmdServe, withArgs(), envFunc(map[string]string{"GCMCP_OPENAI_APPS_CHALLENGE": "from-env"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.OpenAIAppsChallenge != "from-env" {
+		t.Errorf("OpenAIAppsChallenge = %q", cfg.OpenAIAppsChallenge)
+	}
+}
+
 // TestLoad_OperatorFlagsRemoved pins the removal of the flags that only fed
 // the server-rendered pages: passing one is an unknown-flag error.
 func TestLoad_OperatorFlagsRemoved(t *testing.T) {

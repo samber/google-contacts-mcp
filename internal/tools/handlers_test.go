@@ -1047,6 +1047,23 @@ func TestToolAnnotations(t *testing.T) {
 		if tool.OutputSchema == nil {
 			t.Errorf("%s: no output schema", name)
 		}
+
+		checkDirectoryMetadata(t, name, tool)
+	}
+}
+
+// checkDirectoryMetadata requires what both directories reject tools without:
+// Claude's wants a title, OpenAI's wants every hint set explicitly.
+func checkDirectoryMetadata(t *testing.T, name string, tool *mcp.Tool) {
+	t.Helper()
+
+	if tool.Title == "" || tool.Annotations == nil || tool.Annotations.Title != tool.Title {
+		t.Errorf("%s: want title on the tool and in its annotations", name)
+	}
+
+	if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil ||
+		tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
+		t.Errorf("%s: want explicit destructiveHint and openWorldHint false", name)
 	}
 }
 
