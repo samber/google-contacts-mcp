@@ -83,28 +83,30 @@ const image = new URL(ogImage, SITE_URL).href;
     <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     {
-      import.meta.env.PROD && (
-        <script
-          is:inline
-          define:vars={{
-            gtmSrc: GTM_SRC,
-            posthogKey: POSTHOG_KEY,
-            posthogHost: POSTHOG_HOST,
-            ahrefsSrc: AHREFS_SRC,
-            ahrefsKey: AHREFS_KEY,
-          }}
-        >
-          {`function initPostHog() {
-  if (!window.posthog) return;
-  posthog.init(posthogKey, {
-    api_host: posthogHost,
-    disable_session_recording: true,
-  });
-}
-function loadScript(src,attrs,onload){var el=document.createElement('script');el.async=true;el.src=src;el.onload=onload;for(var name in attrs)el.setAttribute(name,attrs[name]);document.head.appendChild(el)}function loadAnalytics(){window.dataLayer=window.dataLayer||[];window.dataLayer.push({'gtm.start':Date.now(),event:'gtm.js'});loadScript(gtmSrc);loadScript(posthogHost+'/static/array.js',0,initPostHog);loadScript(ahrefsSrc,{'data-key':ahrefsKey})}function whenIdle(){'requestIdleCallback'in window?requestIdleCallback(loadAnalytics):setTimeout(loadAnalytics,0)}document.readyState==='complete'?whenIdle():addEventListener('load',whenIdle)`}
-        </script>
-      )
+      /* Top level on purpose: inside a {condition && (...)} expression, Astro emits a
+         template-literal script body verbatim, which the browser runs as a no-op string
+         statement. `enabled` keeps third-party tags out of development builds. */
     }
+    <script
+      is:inline
+      define:vars={{
+        enabled: import.meta.env.PROD,
+        gtmSrc: GTM_SRC,
+        posthogKey: POSTHOG_KEY,
+        posthogHost: POSTHOG_HOST,
+        ahrefsSrc: AHREFS_SRC,
+        ahrefsKey: AHREFS_KEY,
+      }}
+    >
+      function initPostHog() {
+        if (!window.posthog) return;
+        posthog.init(posthogKey, {
+          api_host: posthogHost,
+          disable_session_recording: true,
+        });
+      }
+      function loadScript(src,attrs,onload){var el=document.createElement('script');el.async=true;el.src=src;el.onload=onload;for(var name in attrs)el.setAttribute(name,attrs[name]);document.head.appendChild(el)}function loadAnalytics(){window.dataLayer=window.dataLayer||[];window.dataLayer.push({'gtm.start':Date.now(),event:'gtm.js'});loadScript(gtmSrc);loadScript(posthogHost+'/static/array.js',0,initPostHog);loadScript(ahrefsSrc,{'data-key':ahrefsKey})}function whenIdle(){'requestIdleCallback'in window?requestIdleCallback(loadAnalytics):setTimeout(loadAnalytics,0)}if(enabled)document.readyState==='complete'?whenIdle():addEventListener('load',whenIdle)
+    </script>
     <slot name="head" />
   </head>
   <body>
