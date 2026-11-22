@@ -43,7 +43,7 @@ Portal steps and the answers this project gives:
 
 Listing text (limits: name 100, one-liner 200, description 2,000 characters):
 
-- Name: `Contacts for Google`
+- Name: `Google Contacts`
 - One-liner: `Search, add, update and organize your Google Contacts from Claude.`
 - Description: `Ask Claude to find a phone number or e-mail, add a contact, fix a job title, merge new details into an existing contact by e-mail, or sort contacts into groups. Sign in with your Google account and grant access to Google Contacts only. Contacts are read and written live through the Google People API and are never stored on the server. Tools that change your address book say so, and deleting a contact is flagged as destructive so Claude asks first.`
 
@@ -61,7 +61,7 @@ Claude's OAuth callback is `https://claude.ai/api/mcp/auth_callback`. The server
 3. Build the package and upload it:
 
    ```sh
-   make plugin-openai   # writes dist/contacts-for-google-openai-plugin.zip
+   make plugin-openai   # writes dist/google-contacts-openai-plugin.zip
    ```
 
 4. Fix validation findings, fill the review details, submit.
