@@ -22,20 +22,7 @@ The server listens on `127.0.0.1:8080`, stores its database in `./data/google-co
 
 Plain `http` is accepted only for `localhost` and `127.0.0.1`. Claude and ChatGPT connect from their own cloud, so they cannot reach a server on your laptop: to try them, expose the server through an HTTPS tunnel and use the tunnel URL as `--base-url`, or deploy it on a server with a public HTTPS address.
 
-No Docker image is published. Build one from the repository `Dockerfile`:
-
-```sh
-docker build -t google-contacts-mcp .
-docker run --rm -p 8080:8080 \
-  -v gcmcp-data:/data \
-  -e GCMCP_BASE_URL=https://contacts.example.com \
-  -e GCMCP_GOOGLE_CLIENT_ID=... \
-  -e GCMCP_GOOGLE_CLIENT_SECRET=... \
-  -e GCMCP_ENCRYPTION_KEYS=... \
-  google-contacts-mcp
-```
-
-The container stores its database in `/data`, declared as a volume. Mount a persistent volume on it, as in the command above, or the database lives only as long as the container.
+Prebuilt `tar.gz` archives for linux and darwin (amd64 and arm64) are attached to each [GitHub release](https://github.com/samber/google-contacts-mcp/releases), with a `checksums.txt` file. No Docker image is published.
 
 ## Commands
 

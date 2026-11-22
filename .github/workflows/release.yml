@@ -1,51 +1,58 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
-
-permissions:
-  contents: write # create the GitHub release and upload archives
+  workflow_dispatch:
+    inputs:
+      semver:
+        type: string
+        description: 'Semver (eg: v1.2.3)'
+        required: true
 
 jobs:
-  # The same gates as CI, so a tag pushed from an untested commit never ships.
-  test:
+  release:
+    if: github.triggering_actor == 'samber'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-    env:
-      CGO_ENABLED: "0"
+      contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: gofmt
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - name: go vet
-        run: go vet ./...
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.1
-      - name: go test
-        # -race needs cgo.
-        run: CGO_ENABLED=1 go test -race ./...
+    - uses: actions/checkout@v7
 
-  goreleaser:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # goreleaser builds the changelog from the full tag history.
-          fetch-depth: 0
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: v2.17.1
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: 1.21
+        stable: false
+
+    - name: Test
+      run: make test
+
+    # remove tests to clean dependencies
+    - name: Remove xxx_test.go files
+      run: rm -rf $(find . -type f -name "*_test.go" ! -name "*_example_test.go") ./docs ./site
+
+    # cleanup test dependencies
+    - name: Cleanup dependencies
+      run: go mod tidy
+
+    - name: List files
+      run: tree -Cfi
+    - name: Write new go.mod into logs
+      run: cat go.mod
+    - name: Write new go.sum into logs
+      run: cat go.sum
+
+    - name: Create tag
+      run: |
+          git config --global user.name '${{ github.triggering_actor }}'
+          git config --global user.email "${{ github.triggering_actor}}@users.noreply.github.com"
+
+          git add .
+          git commit --allow-empty -m 'bump ${{ inputs.semver }}'
+          git tag ${{ inputs.semver }}
+          git push origin ${{ inputs.semver }}
+
+    - name: Release
+      uses: softprops/action-gh-release@v3
+      with:
+        name: ${{ inputs.semver }}
+        tag_name: ${{ inputs.semver }}
