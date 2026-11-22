@@ -6,6 +6,7 @@ package web
 
 import (
 	"crypto/subtle"
+	"io"
 	"net/http"
 
 	"github.com/samber/google-contacts-mcp/internal/config"
@@ -22,6 +23,10 @@ const (
 	// unknown path, which must fall through to the mux's 404.
 	patternHome = "GET /{$}"
 
+	// patternOpenAIChallenge is where OpenAI reads the domain-verification
+	// token before it lists the MCP server in its plugin directory.
+	patternOpenAIChallenge = "GET /.well-known/openai-apps-challenge"
+
 	// authHeaderChallenge names the protection space of the metrics 401 answer.
 	authHeaderChallenge = `Basic realm="metrics"`
 )
@@ -35,6 +40,10 @@ func New(cfg config.Config, oauthSrv *oauth.Server, mcpHandler, metricsHandler h
 	oauthSrv.Mount(mux)
 	mux.Handle(patternMCP, mcpHandler)
 
+	if cfg.OpenAIAppsChallenge != "" {
+		mux.Handle(patternOpenAIChallenge, openAIChallengeHandler(cfg.OpenAIAppsChallenge))
+	}
+
 	if cfg.SiteURL != nil {
 		// 302, not 301: browsers cache a 301 forever, which would pin the
 		// redirect after the website moves.
@@ -46,6 +55,16 @@ func New(cfg config.Config, oauthSrv *oauth.Server, mcpHandler, metricsHandler h
 	}
 
 	return withMetrics(cfg, metricsHandler, mux)
+}
+
+// openAIChallengeHandler answers with the token alone as plain text: OpenAI
+// rejects JSON, lists, or a trailing newline, since it compares the exact body.
+func openAIChallengeHandler(token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+		_, _ = io.WriteString(w, token)
+	})
 }
 
 // NewMetricsHandler returns the handler of the separate metrics listener

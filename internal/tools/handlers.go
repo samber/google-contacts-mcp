@@ -189,65 +189,91 @@ func (o GroupsOutput) resultCount() int      { return len(o.Groups) }
 func (GroupOutput) resultCount() int         { return 1 }
 func (ModifyMembersOutput) resultCount() int { return 1 }
 
-func readOnly() *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: true} }
+// Every tool declares its hints explicitly: the directories reject tools with
+// a missing title, and OpenAI requires readOnlyHint, destructiveHint and
+// openWorldHint to be set. openWorldHint is false because each tool acts on
+// one bounded private account, the caller's Google Contacts.
+var (
+	hintFalse = false
+	hintTrue  = true
+)
 
-func writes(destructive bool) *mcp.ToolAnnotations {
-	return &mcp.ToolAnnotations{DestructiveHint: &destructive}
+func readOnly(title string) *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: true, DestructiveHint: &hintFalse, OpenWorldHint: &hintFalse}
+}
+
+func writes(title string, destructive bool) *mcp.ToolAnnotations {
+	d := &hintFalse
+	if destructive {
+		d = &hintTrue
+	}
+
+	return &mcp.ToolAnnotations{Title: title, DestructiveHint: d, OpenWorldHint: &hintFalse}
 }
 
 func registerTools(srv *mcp.Server, deps Deps) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "search_contacts",
+		Title:       "Search contacts",
 		Description: "Search the user's Google Contacts by prefix of name, nickname, e-mail, phone or organization.",
-		Annotations: readOnly(),
+		Annotations: readOnly("Search contacts"),
 	}, handle(deps, false, searchContacts))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_contacts",
+		Title:       "List contacts",
 		Description: "List the user's Google Contacts one page at a time.",
-		Annotations: readOnly(),
+		Annotations: readOnly("List contacts"),
 	}, handle(deps, false, listContacts))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "get_contact",
+		Title:       "Get contact",
 		Description: "Get one contact with every handled field and its etag.",
-		Annotations: readOnly(),
+		Annotations: readOnly("Get contact"),
 	}, handle(deps, false, getContact))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_contact",
+		Title:       "Create contact",
 		Description: "Create a contact." + writeWarning,
-		Annotations: writes(false),
+		Annotations: writes("Create contact", false),
 	}, handle(deps, true, createContact))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name: "update_contact",
+		Name:  "update_contact",
+		Title: "Update contact",
 		Description: "Update the fields given, leaving the others unchanged. A given list replaces the whole list; " +
 			"an empty value clears the field." + writeWarning,
-		Annotations: writes(false),
+		Annotations: writes("Update contact", false),
 	}, handle(deps, true, updateContact))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name: "upsert_contact_by_email",
+		Name:  "upsert_contact_by_email",
+		Title: "Upsert contact by email",
 		Description: "Find the contact with this exact e-mail and fill only its empty fields and missing values, " +
 			"or create it when none exists. Never overwrites or removes a value. Several matches change nothing " +
 			"and return the candidates." + writeWarning,
-		Annotations: writes(false),
+		Annotations: writes("Upsert contact by email", false),
 	}, handle(deps, true, upsertContact))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "delete_contact",
+		Title:       "Delete contact",
 		Description: "Delete a contact permanently." + writeWarning,
-		Annotations: writes(true),
+		Annotations: writes("Delete contact", true),
 	}, handle(deps, true, deleteContact))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_contact_groups",
+		Title:       "List contact groups",
 		Description: "List the user's contact groups (labels), user and system.",
-		Annotations: readOnly(),
+		Annotations: readOnly("List contact groups"),
 	}, handle(deps, false, listGroups))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_contact_group",
+		Title:       "Create contact group",
 		Description: "Create a contact group (label)." + writeWarning,
-		Annotations: writes(false),
+		Annotations: writes("Create contact group", false),
 	}, handle(deps, true, createGroup))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "modify_contact_group_members",
+		Title:       "Modify contact group members",
 		Description: "Add contacts to and remove contacts from a contact group." + writeWarning,
-		Annotations: writes(false),
+		Annotations: writes("Modify contact group members", false),
 	}, handle(deps, true, modifyMembers))
 }
 

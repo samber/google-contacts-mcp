@@ -69,6 +69,7 @@ const (
 	flagRateLimitReads      = "rate-limit-reads"
 	flagRateLimitWrites     = "rate-limit-writes"
 	flagSiteURL             = "site-url"
+	flagOpenAIAppsChallenge = "openai-apps-challenge"
 )
 
 // loopbackHosts may use plain http in --base-url, for local development only.
@@ -104,6 +105,9 @@ type Config struct {
 	RateLimitWrites int
 	// SiteURL is where GET / redirects; nil (nullable) when no website is configured.
 	SiteURL *url.URL
+	// OpenAIAppsChallenge is the domain-verification token served at
+	// /.well-known/openai-apps-challenge; empty (nullable) serves nothing.
+	OpenAIAppsChallenge string
 	// Args holds the positional arguments left after the flags.
 	Args []string
 }
@@ -118,7 +122,7 @@ type raw struct {
 	baseURL, listen, dbPath, googleClientID, allowedDomains, logLevel string
 	metricsPath, metricsListen, metricsUser                           string
 	metricsPassword, metricsPasswordFile                              string
-	siteURL                                                           string
+	siteURL, openAIAppsChallenge                                      string
 	enableDCR, metrics                                                bool
 	rateLimitReads, rateLimitWrites                                   int
 }
@@ -185,6 +189,7 @@ func newFlagSet(getenv func(string) string, r *raw) (*flag.FlagSet, error) {
 	integer(&r.rateLimitReads, flagRateLimitReads, defaultRateLimitReads, "per-user reads per minute")
 	integer(&r.rateLimitWrites, flagRateLimitWrites, defaultRateLimitWrites, "per-user writes per minute")
 	str(&r.siteURL, flagSiteURL, "", "website URL that GET / redirects to (empty: / answers 404)")
+	str(&r.openAIAppsChallenge, flagOpenAIAppsChallenge, "", "OpenAI domain-verification token served at /.well-known/openai-apps-challenge (empty: 404)")
 
 	return fs, errors.Join(errs...)
 }
@@ -243,6 +248,17 @@ var commandSpecs = map[string]commandSpec{
 	},
 }
 
+// validateOpenAIAppsChallenge rejects a token with inner whitespace. OpenAI
+// compares the served body to the token byte for byte, so such a token could
+// never match and is a configuration mistake.
+func validateOpenAIAppsChallenge(cfg Config) []error {
+	if strings.ContainsAny(cfg.OpenAIAppsChallenge, " \t\r\n") {
+		return []error{fmt.Errorf("--%s must not contain whitespace", flagOpenAIAppsChallenge)}
+	}
+
+	return nil
+}
+
 // Load parses args (without the subcommand) and env into a validated Config
 // for cmd. Flags must come before positional arguments, which land in
 // Config.Args. It returns flag.ErrHelp when -h or --help is given.
@@ -277,7 +293,9 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 		MetricsUser:        r.metricsUser,
 		RateLimitReads:     r.rateLimitReads,
 		RateLimitWrites:    r.rateLimitWrites,
-		Args:               fs.Args(),
+		// Surrounding whitespace, such as a newline from a secret file, is cut.
+		OpenAIAppsChallenge: strings.TrimSpace(r.openAIAppsChallenge),
+		Args:                fs.Args(),
 	}
 
 	errs := validateArgs(cmd, spec, cfg.Args)
@@ -300,6 +318,8 @@ func Load(cmd string, args []string, getenv func(string) string) (Config, error)
 
 		cfg.SiteURL = u
 	}
+
+	errs = append(errs, validateOpenAIAppsChallenge(cfg)...)
 
 	level, ok := logLevels[strings.ToLower(r.logLevel)]
 	if !ok {

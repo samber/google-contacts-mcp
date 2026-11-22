@@ -3,6 +3,11 @@ MODULES=$(shell go list -m)
 build:
 	go build -v ./...
 
+plugin-openai:
+	mkdir -p dist
+	rm -f dist/google-contacts-openai-plugin.zip
+	cd plugin/openai && zip -r -X ../../dist/google-contacts-openai-plugin.zip . -x '.DS_Store'
+
 test:
 	go test -race -v ${MODULES} ./...
 watch-test:
