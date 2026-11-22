@@ -9,9 +9,9 @@ plugin-openai:
 	cd plugin/openai && zip -r -X ../../dist/google-contacts-openai-plugin.zip . -x '.DS_Store'
 
 test:
-	go test -race -v ${MODULES} ./...
+	go test -race -v ./...
 watch-test:
-	reflex -t 50ms -s -- sh -c 'gotest -race -v ${MODULES} ./...'
+	reflex -t 50ms -s -- sh -c 'gotest -race -v ./...'
 
 bench:
 	go test -benchmem -count 3 -bench ${MODULES} ./...
@@ -19,7 +19,7 @@ watch-bench:
 	reflex -t 50ms -s -- sh -c 'go test -benchmem -count 3 -bench ${MODULES} ./...'
 
 coverage:
-	go test -v -coverprofile=cover.out -covermode=atomic ${MODULES} ./...
+	go test -v -coverprofile=cover.out -covermode=atomic ./...
 	go tool cover -html=cover.out -o cover.html
 
 tools:
