@@ -1,16 +1,18 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
-<style>
-body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; color: #1f2328; }
-</style>
+{{template "head"}}
 </head>
 <body>
+<main>
+<div class="card">
+{{template "brand"}}
+<div class="icon-error"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5"/><path d="M12 16h.01"/></svg></div>
 <h1>{{.Title}}</h1>
-<p>{{.Message}}</p>
-{{if .RetryURL}}<p><a href="{{.RetryURL}}">Try again</a></p>{{end}}
+<p class="muted">{{.Message}}</p>
+{{if .RetryURL}}<div class="actions"><a class="button primary" href="{{.RetryURL}}">Try again</a></div>{{else}}<p class="muted">You can close this tab and start again from your assistant.</p>{{end}}
+</div>
+</main>
 </body>
 </html>
