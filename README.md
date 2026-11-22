@@ -4,6 +4,8 @@ Connect Claude or ChatGPT to your Google Contacts. Your assistant can then searc
 
 `google-contacts-mcp` is a **remote** [MCP](https://modelcontextprotocol.io) server. One instance serves many Google accounts, each isolated from the others. See the [landing page](https://google-contacts-mcp.samber.dev) to join.
 
+<img width="1904" height="640" alt="image" src="https://github.com/user-attachments/assets/dcedb3c9-ebbb-4aeb-99e3-8a803d56a5cd" />
+
 ## Tools
 
 | Tool                           | What it does                                                                                                                                   |
