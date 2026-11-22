@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -166,8 +167,10 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		EnablePKCEPlainChallengeMethod: false,
 		// Empty, not nil: every grant gets a refresh token without asking for
 		// an offline scope, which MCP clients never request.
-		RefreshTokenScopes:    []string{},
-		RedirectSecureChecker: fosite.IsRedirectURISecureStrict,
+		RefreshTokenScopes: []string{},
+		// fosite's strict checker refuses private-use schemes, which
+		// isAllowedRedirect accepts alongside https and loopback http.
+		RedirectSecureChecker: func(_ context.Context, u *url.URL) bool { return isAllowedRedirect(u) },
 		TokenURL:              issuer + pathToken,
 		AccessTokenIssuer:     issuer,
 	}

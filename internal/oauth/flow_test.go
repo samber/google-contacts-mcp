@@ -812,12 +812,15 @@ func TestFlow_UnsafeRedirectRejected(t *testing.T) {
 	e := newEnv(t)
 	if err := e.st.SaveClient(context.Background(), &store.OAuthClient{
 		ID: "bad-client", Kind: store.ClientKindDCR, Name: "Bad",
-		RedirectURIs: []string{"javascript:alert(1)", "http://evil.example.com/cb"},
+		RedirectURIs: []string{"javascript:alert(1)", "http://evil.example.com/cb", "data:text/html,x", "myapp://evil.example.com/cb"},
 	}); err != nil {
 		t.Fatalf("SaveClient: %v", err)
 	}
 
-	for _, ru := range []string{"javascript:alert(1)", "http://evil.example.com/cb", "https://unregistered.example.com/cb"} {
+	for _, ru := range []string{
+		"javascript:alert(1)", "http://evil.example.com/cb", "https://unregistered.example.com/cb",
+		"data:text/html,x", "myapp://evil.example.com/cb", "com.unregistered.app:/cb",
+	} {
 		params := authorizeParams(newPKCE())
 		params.Set("client_id", "bad-client")
 		params.Set("redirect_uri", ru)
@@ -826,6 +829,46 @@ func TestFlow_UnsafeRedirectRejected(t *testing.T) {
 		if strings.Contains(body, "javascript:") || strings.Contains(body, "evil.example.com") {
 			t.Errorf("error page echoes the redirect URI: %s", body)
 		}
+	}
+}
+
+// TestFlow_PrivateUseSchemeRedirect runs the browser leg for a native client
+// that registered a reverse-domain scheme: the consent page names the scheme
+// and our authorization code lands on the registered private-use URI.
+func TestFlow_PrivateUseSchemeRedirect(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t)
+	if err := e.st.SaveClient(context.Background(), &store.OAuthClient{
+		ID: "native-client", Kind: store.ClientKindDCR, Name: "Native",
+		RedirectURIs: []string{testRedirectNative},
+	}); err != nil {
+		t.Fatalf("SaveClient: %v", err)
+	}
+
+	params := authorizeParams(newPKCE())
+	params.Set("client_id", "native-client")
+	params.Set("redirect_uri", testRedirectNative)
+
+	cp := e.authorize(params)
+	if !strings.Contains(cp.body, "<strong>com.example.app</strong>") {
+		t.Errorf("consent page does not name the scheme: %s", cp.body)
+	}
+
+	rec := e.callback(e.approve(cp), cp.cookie)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("callback status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+
+	q := loc.Query()
+	if loc.Scheme != "com.example.app" || loc.Path != "/callback" || q.Get("code") == "" ||
+		q.Get("state") != testState || q.Get("iss") != testBaseURL {
+		t.Errorf("redirect = %s", loc)
 	}
 }
 
