@@ -2,40 +2,76 @@
 import ChatDemo from '../components/ChatDemo.astro';
 import Closing from '../components/Closing.astro';
 import ConnectorUrl from '../components/ConnectorUrl.astro';
+import Faq from '../components/Faq.astro';
 import Features from '../components/Features.astro';
 import StoredCards from '../components/StoredCards.astro';
 import Base from '../layouts/Base.astro';
-import { OPERATOR_NAME, REPO_URL, SITE_NAME, SITE_SUMMARY, SITE_URL, TOOLS } from '../data/site';
+import {
+  FAQ,
+  OPERATOR_GITHUB,
+  OPERATOR_LINKEDIN,
+  OPERATOR_NAME,
+  REPO_URL,
+  SELF_HOSTING_URL,
+  SITE_NAME,
+  SITE_SUMMARY,
+  SITE_URL,
+  TOOLS,
+} from '../data/site';
 
-// Structured data for search engines and assistants. It makes no claim about who can
-// sign up (no "offers" or availability), since access may be limited.
+// One @graph, linked by @id: the site, the software, its operator and the FAQ. The FAQ comes
+// from the same array as the visible section, so the markup cannot drift from the page.
+// BusinessApplication: the closest schema.org category for a tool that manages contacts for work.
+const PERSON_ID = `${SITE_URL}/#operator`;
 const structuredData = {
   '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  '@id': `${SITE_URL}/#software`,
-  name: SITE_NAME,
-  description: SITE_SUMMARY,
-  applicationCategory: 'BusinessApplication',
-  operatingSystem: 'Web',
-  url: SITE_URL,
-  image: `${SITE_URL}/og.png`,
-  isAccessibleForFree: true,
-  license: 'https://opensource.org/license/mit',
-  // One feature per MCP tool, from the same list the page and the gate use.
-  featureList: TOOLS.map((tool) => `${tool.name}: ${tool.summary}`),
-  author: { '@type': 'Person', name: OPERATOR_NAME },
-  sameAs: [REPO_URL],
-};
-
-// Names the site itself, so search engines show "Google Contacts MCP" as the site name.
-const websiteData = {
-  '@context': 'https://schema.org',
-  '@type': 'WebSite',
-  '@id': `${SITE_URL}/#website`,
-  name: SITE_NAME,
-  url: SITE_URL,
-  inLanguage: 'en',
-  about: { '@id': `${SITE_URL}/#software` },
+  '@graph': [
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE_URL}/#website`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      inLanguage: 'en',
+      publisher: { '@id': PERSON_ID },
+      about: { '@id': `${SITE_URL}/#software` },
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': `${SITE_URL}/#software`,
+      name: SITE_NAME,
+      alternateName: 'Google Contacts MCP server',
+      description: SITE_SUMMARY,
+      applicationCategory: 'BusinessApplication',
+      operatingSystem: 'Web',
+      url: SITE_URL,
+      image: `${SITE_URL}/og.png`,
+      isAccessibleForFree: true,
+      // The hosted service costs nothing and the source is MIT.
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      license: 'https://opensource.org/license/mit',
+      softwareHelp: { '@type': 'WebPage', url: SELF_HOSTING_URL },
+      // One feature per MCP tool, from the same list the page and the gate use.
+      featureList: TOOLS.map((tool) => `${tool.name}: ${tool.summary}`),
+      author: { '@id': PERSON_ID },
+      sameAs: [REPO_URL],
+    },
+    {
+      '@type': 'Person',
+      '@id': PERSON_ID,
+      name: OPERATOR_NAME,
+      url: OPERATOR_GITHUB,
+      sameAs: [OPERATOR_GITHUB, OPERATOR_LINKEDIN],
+    },
+    {
+      '@type': 'FAQPage',
+      '@id': `${SITE_URL}/#faq`,
+      mainEntity: FAQ.map(({ question, answer }) => ({
+        '@type': 'Question',
+        name: question,
+        acceptedAnswer: { '@type': 'Answer', text: answer },
+      })),
+    },
+  ],
 };
 
 // The headline's first sentence, one span per word for the waterfall entrance.
@@ -50,7 +86,6 @@ const HIGHLIGHT_WORDS = 3;
   path="/"
 >
   <script slot="head" type="application/ld+json" set:html={JSON.stringify(structuredData)} />
-  <script slot="head" type="application/ld+json" set:html={JSON.stringify(websiteData)} />
   <section class="hero" aria-labelledby="hero-title">
     <!-- Decorative: the logo's colours swirling slowly inside a diagonal band. -->
     <div class="ribbon" aria-hidden="true"><div class="swirl"></div></div>
@@ -84,6 +119,7 @@ const HIGHLIGHT_WORDS = 3;
 
   <Features />
   <StoredCards />
+  <Faq />
   <Closing />
 </Base>
 

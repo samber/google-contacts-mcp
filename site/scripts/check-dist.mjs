@@ -143,7 +143,11 @@ if (existsSync(`${DIST}index.html`)) {
     fail('index.html: JSON-LD block is missing');
   } else {
     try {
-      if (JSON.parse(jsonLd)['@type'] !== 'SoftwareApplication') fail('index.html: JSON-LD @type is not SoftwareApplication');
+      // The home page carries one @graph; each node type below must be in it.
+      const types = (JSON.parse(jsonLd)['@graph'] ?? []).map((node) => node['@type']);
+      for (const type of ['SoftwareApplication', 'WebSite', 'Person', 'FAQPage']) {
+        if (!types.includes(type)) fail(`index.html: JSON-LD @graph has no ${type}`);
+      }
     } catch {
       fail('index.html: JSON-LD is not valid JSON');
     }
