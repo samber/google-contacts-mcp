@@ -49,6 +49,8 @@ const ALLOWED_HOSTS = new Set([
   'www.googletagmanager.com',
   // PostHog through the owner's first-party proxy, loaded on every page at the owner's request.
   'hogpost.samber.dev',
+  // Ahrefs Web Analytics, loaded on every page at the owner's request.
+  'analytics.ahrefs.com',
 ]);
 
 // Google requires this exact sentence in the privacy policy of apps that use its APIs.
