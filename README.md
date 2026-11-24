@@ -1,6 +1,15 @@
 # Google Contacts MCP
 
-Connect Claude or ChatGPT to your Google Contacts. Your assistant can then search, read, create, update, enrich and label your contacts, and keep your address book up to date from the e-mail signatures you receive.
+> Connect Claude or ChatGPT to your Google Contacts. Your assistant can then search, read, create, update, enrich and label your contacts, and keep your address book up to date from the e-mail signatures you receive.
+
+[![tag](https://img.shields.io/github/tag/samber/google-contacts-mcp.svg)](https://github.com/samber/google-contacts-mcp/releases)
+![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.26-%23007d9c)
+[![GoDoc](https://godoc.org/github.com/samber/google-contacts-mcp?status.svg)](https://pkg.go.dev/github.com/samber/google-contacts-mcp)
+![Build Status](https://github.com/samber/google-contacts-mcp/actions/workflows/test.yml/badge.svg)
+[![Go report](https://goreportcard.com/badge/github.com/samber/google-contacts-mcp)](https://goreportcard.com/report/github.com/samber/google-contacts-mcp)
+[![Coverage](https://img.shields.io/codecov/c/github/samber/google-contacts-mcp)](https://codecov.io/gh/samber/google-contacts-mcp)
+[![Contributors](https://img.shields.io/github/contributors/samber/google-contacts-mcp)](https://github.com/samber/google-contacts-mcp/graphs/contributors)
+[![License](https://img.shields.io/github/license/samber/google-contacts-mcp)](./LICENSE)
 
 `google-contacts-mcp` is a **remote** [MCP](https://modelcontextprotocol.io) server. One instance serves many Google accounts, each isolated from the others. See the [landing page](https://google-contacts-mcp.samber.dev) to join.
 
