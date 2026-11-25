@@ -236,7 +236,13 @@ func TestFetch_Oversize(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		doc := docFor(r)
 		doc["padding"] = strings.Repeat("x", 2*int(defaultMaxBytes))
-		writeJSON(t, w, doc)
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+		// The fetcher stops reading at the size cap and closes the connection,
+		// so a write error (connection reset) is expected and timing dependent.
+		// Not routed through writeJSON, which fails the test on write errors.
+		_ = json.NewEncoder(w).Encode(doc)
 	}))
 	defer srv.Close()
 
