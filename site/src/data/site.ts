@@ -124,4 +124,4 @@ export const FAQ: readonly FaqEntry[] = [
 ];
 
 /** Date (YYYY-MM-DD) of the last change to the privacy policy or the terms. Update it with every edit of either page. */
-export const LEGAL_UPDATED = '2026-11-20';
+export const LEGAL_UPDATED = '2026-11-25';

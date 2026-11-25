@@ -51,7 +51,49 @@ const INACTIVITY_DAYS = 180;
     the status. At that level, arguments and results are not logged, and tokens never are.
   </p>
 
+  <h2>How your data is protected</h2>
+  <p>Your contacts and your Google tokens are sensitive data. These measures protect them:</p>
+  <ul>
+    <li>
+      <strong>In transit.</strong> Every connection to this service uses HTTPS (TLS), and so do the calls this service makes
+      to Google.
+    </li>
+    <li>
+      <strong>At rest.</strong> Your Google tokens are encrypted with AES-256-GCM before they reach the database, and each
+      one is bound to the user it belongs to. The encryption keys are not stored in the database, and they can be rotated.
+    </li>
+    <li>
+      <strong>Contacts are not stored.</strong> Contact data passes through memory during one tool call. It is never
+      written to the database or to disk.
+    </li>
+    <li>
+      <strong>Tokens issued to your assistant</strong> are opaque, and only their hashes are stored. Access tokens last 1
+      hour. Refresh tokens rotate on every use, and reusing an old one revokes the whole token family.
+    </li>
+    <li>
+      <strong>Least privilege.</strong> Sign-in uses OAuth 2.1 with PKCE (S256), and tokens are bound to this service's
+      endpoint. Tools accept only contact and group identifiers, so a tool call cannot reach any other Google resource.
+    </li>
+    <li>
+      <strong>Access control.</strong> Access to the server, its database and its encryption keys is limited to the
+      operator and the hosting provider.
+    </li>
+    <li>
+      <strong>Abuse limits.</strong> Per-user rate limits apply to reads and writes. Logs never contain tokens, secrets or
+      Google responses.
+    </li>
+    <li>
+      <strong>Incidents.</strong> If a breach affects your data, the operator revokes the affected Google grants, informs
+      you by e-mail, and notifies the CNIL when the law requires it.
+    </li>
+  </ul>
+
   <h2>Use of Google data</h2>
+  <p>
+    This service requests three Google scopes: <code>openid</code> and <code>email</code> identify your Google account,
+    and <code>https://www.googleapis.com/auth/contacts</code> lets your assistant read and update your Google Contacts.
+    It requests no other Google user data.
+  </p>
   <p>
     Google data is used only to perform the actions your assistant requests. The results of those actions are returned to
     the assistant you connected, and handled by its provider under its own privacy policy. This service does not share
