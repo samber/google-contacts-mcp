@@ -43,7 +43,7 @@ Other `make` targets: `build`, `coverage` (writes `cover.out`, `cover.html`), `b
 
 - `.github/workflows/test.yml`: push to `main` and PRs; matrix Go `go.mod` + `stable`; runs `make build`, `make test`, `make coverage`, uploads to Codecov on `stable`.
 - `.github/workflows/lint.yml`: push to `main`, PRs, weekly cron, manual; `golangci-lint-action` with `.golangci.yml`. Version not pinned.
-- `.github/workflows/security.yml`: push to `main`, PRs, weekly cron, manual; Bearer, CodeQL, two Trivy jobs (`.trivyignore` referenced, file missing). `govulncheck` job commented out.
+- `.github/workflows/security.yml`: push to `main`, PRs, weekly cron, manual; Bearer, CodeQL, two Trivy jobs (ignore list in `.trivyignore`, empty). `govulncheck` job commented out.
 - `.github/workflows/release.yml`: on a `v*` tag, reruns gofmt, vet, golangci-lint, `go test -race`, then cross-compiles `tar.gz` archives (linux and darwin, amd64 and arm64) with `go build`, and `gh release create` publishes them with `checksums.txt` and generated notes. No Docker image is published.
 - `.github/workflows/dependabot-automerge.yaml`: auto-merge (squash) of Dependabot `github_actions` PRs only.
 
