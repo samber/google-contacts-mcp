@@ -23,6 +23,11 @@ import (
 const (
 	// serverName is the MCP implementation name advertised to clients.
 	serverName = "google-contacts-mcp"
+	// serverInstructions frames every tool for the client model: "contacts"
+	// means the user's own address book, and the tools never send messages.
+	serverInstructions = "Manages the user's personal address book stored in Google Contacts (people they know). " +
+		"Does not send messages. Find a contact with search_contacts, then pass its resource_name (people/c123) " +
+		"to get, update, delete or group tools. Groups are Google Contacts labels."
 	// Protocol versions served (spec §5.2). The two legacy ones keep clients
 	// that open with initialize working (go-sdk PR #1345).
 	protocolVersion20260728 = "2026-07-28"
@@ -106,7 +111,8 @@ func (d Deps) logger() *slog.Logger {
 // NewServer builds the MCP server with every contact tool registered.
 func NewServer(deps Deps) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: deps.Version, Icons: serverIcons()}, &mcp.ServerOptions{
-		Logger: deps.logger(),
+		Logger:       deps.logger(),
+		Instructions: serverInstructions,
 		// Advertise tools.listChanged explicitly so it holds even if the tool
 		// set becomes dynamic or empty. This replaces the SDK default, which
 		// advertises the deprecated MCP logging capability; the server logs
