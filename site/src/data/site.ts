@@ -45,7 +45,7 @@ export type Tool = {
 
 export const TOOLS: readonly Tool[] = [
   { name: 'search_contacts', summary: 'Find people by the start of a name, e-mail, phone or company.', group: 'find' },
-  { name: 'list_contacts', summary: 'Browse your whole address book, page by page.', group: 'find' },
+  { name: 'list_contacts', summary: 'Browse your whole address book, or one group, page by page.', group: 'find' },
   { name: 'get_contact', summary: 'Read everything stored on one contact.', group: 'find' },
   { name: 'create_contact', summary: 'Add a new contact.', group: 'write' },
   { name: 'update_contact', summary: 'Change only the fields you give. A list you give replaces the old list.', group: 'write' },

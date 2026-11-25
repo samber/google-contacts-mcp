@@ -96,8 +96,9 @@ type SearchOutput struct {
 // ListInput is the list_contacts input.
 type ListInput struct {
 	PageSize  int    `json:"page_size,omitempty" jsonschema:"contacts per page, 1 to 1000, default 100"`
-	PageToken string `json:"page_token,omitempty" jsonschema:"next_page_token of the previous page"`
+	PageToken string `json:"page_token,omitempty" jsonschema:"next_page_token of the previous page, sent with the same group and sort"`
 	Sort      string `json:"sort,omitempty" jsonschema:"FIRST_NAME_ASCENDING, LAST_NAME_ASCENDING or LAST_MODIFIED_DESCENDING"`
+	Group     string `json:"group,omitempty" jsonschema:"only members of this group: user group name (Clients) or resource name (contactGroups/abc, contactGroups/starred for favorites). A page can then hold fewer contacts than page_size, even none: keep paging while next_page_token is set"`
 }
 
 // ListOutput is the list_contacts output.
@@ -213,66 +214,77 @@ func writes(title string, destructive bool) *mcp.ToolAnnotations {
 
 func registerTools(srv *mcp.Server, deps Deps) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "search_contacts",
-		Title:       "Search contacts",
-		Description: "Search the user's Google Contacts by prefix of name, nickname, e-mail, phone or organization.",
+		Name:  "search_contacts",
+		Title: "Search contacts",
+		Description: "Find people in the user's address book by the start of a word in their name, nickname, e-mail, " +
+			"phone, company or job title. Returns each match with all its fields and its resource_name. " +
+			"Does not search addresses or notes: page through list_contacts for those.",
 		Annotations: readOnly("Search contacts"),
 	}, handle(deps, false, searchContacts))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_contacts",
-		Title:       "List contacts",
-		Description: "List the user's Google Contacts one page at a time.",
+		Name:  "list_contacts",
+		Title: "List contacts",
+		Description: "Page through the user's whole address book. Use it to browse, to list the members of a group " +
+			"(group), to filter on fields search ignores (city, notes), or with sort LAST_MODIFIED_DESCENDING " +
+			"to see recently added or edited contacts.",
 		Annotations: readOnly("List contacts"),
 	}, handle(deps, false, listContacts))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "get_contact",
 		Title:       "Get contact",
-		Description: "Get one contact with every handled field and its etag.",
+		Description: "Read one contact by resource_name (from search_contacts or list_contacts), with all its fields.",
 		Annotations: readOnly("Get contact"),
 	}, handle(deps, false, getContact))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "create_contact",
-		Title:       "Create contact",
-		Description: "Create a contact." + writeWarning,
+		Name:  "create_contact",
+		Title: "Create contact",
+		Description: "Add a new person to the user's address book. No field is required. Search first to avoid " +
+			"duplicates; when you know an e-mail, prefer upsert_contact_by_email." + writeWarning,
 		Annotations: writes("Create contact", false),
 	}, handle(deps, true, createContact))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:  "update_contact",
 		Title: "Update contact",
-		Description: "Update the fields given, leaving the others unchanged. A given list replaces the whole list; " +
-			"an empty value clears the field." + writeWarning,
+		Description: "Change fields of one contact by resource_name (from search_contacts); fields you omit stay " +
+			"unchanged. A list you send replaces the whole list: to add one phone, get_contact first and send all " +
+			"phones, or use upsert_contact_by_email. An empty value clears the field." + writeWarning,
 		Annotations: writes("Update contact", false),
 	}, handle(deps, true, updateContact))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:  "upsert_contact_by_email",
 		Title: "Upsert contact by email",
-		Description: "Find the contact with this exact e-mail and fill only its empty fields and missing values, " +
-			"or create it when none exists. Never overwrites or removes a value. Several matches change nothing " +
-			"and return the candidates." + writeWarning,
+		Description: "Add what you know about a person identified by e-mail, without losing anything. Finds the " +
+			"contact with this exact e-mail and fills only its empty fields and missing values, or creates it " +
+			"when none exists. Never overwrites or removes a value. Several matches change nothing and return " +
+			"the candidates." + writeWarning,
 		Annotations: writes("Upsert contact by email", false),
 	}, handle(deps, true, upsertContact))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "delete_contact",
-		Title:       "Delete contact",
-		Description: "Delete a contact permanently." + writeWarning,
+		Name:  "delete_contact",
+		Title: "Delete contact",
+		Description: "Delete one contact permanently by resource_name. The deletion reaches every device synced " +
+			"with the user's Google account." + writeWarning,
 		Annotations: writes("Delete contact", true),
 	}, handle(deps, true, deleteContact))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_contact_groups",
-		Title:       "List contact groups",
-		Description: "List the user's contact groups (labels), user and system.",
+		Name:  "list_contact_groups",
+		Title: "List contact groups",
+		Description: "List the user's contact groups, the labels Google Contacts uses as tags or lists (Family, " +
+			"Clients...), with member counts. System groups include starred (favorites) and myContacts. " +
+			"To list a group's members, call list_contacts with group.",
 		Annotations: readOnly("List contact groups"),
 	}, handle(deps, false, listGroups))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_contact_group",
 		Title:       "Create contact group",
-		Description: "Create a contact group (label)." + writeWarning,
+		Description: "Create an empty contact group (label). Add people with modify_contact_group_members." + writeWarning,
 		Annotations: writes("Create contact group", false),
 	}, handle(deps, true, createGroup))
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "modify_contact_group_members",
-		Title:       "Modify contact group members",
-		Description: "Add contacts to and remove contacts from a contact group." + writeWarning,
+		Name:  "modify_contact_group_members",
+		Title: "Modify contact group members",
+		Description: "Add contacts to and remove contacts from a group (label). Name contacts by resource_name " +
+			"(from search_contacts), not by person name." + writeWarning,
 		Annotations: writes("Modify contact group members", false),
 	}, handle(deps, true, modifyMembers))
 }
@@ -307,13 +319,17 @@ func listContacts(ctx context.Context, p contacts.People, in ListInput) (ListOut
 
 	size = min(size, maxPageSize)
 
+	if in.Group != "" {
+		return listGroupContacts(ctx, p, in, size)
+	}
+	// A group page token sent without its group would reach Google as garbage.
+	if strings.HasPrefix(in.PageToken, groupTokenPrefix) {
+		return ListOutput{}, newToolError(msgInvalidPageToken)
+	}
+
 	page, next, err := p.List(ctx, size, in.PageToken, in.Sort)
 	if err != nil {
-		if in.PageToken != "" && errors.Is(err, contacts.ErrInvalidArgument) {
-			return ListOutput{}, newToolError("invalid page_token")
-		}
-
-		return ListOutput{}, err
+		return ListOutput{}, listError(err, in.PageToken)
 	}
 
 	out := ListOutput{Contacts: toOutputs(page), NextPageToken: next}

@@ -19,8 +19,8 @@
 
 | Tool                           | What it does                                                                                                                                   |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `search_contacts`              | Prefix search on names, nicknames, e-mails, phones and organizations (`query`, `limit`).                                                       |
-| `list_contacts`                | Pages through all contacts (`page_size`, `page_token`, `sort`).                                                                                |
+| `search_contacts`              | Prefix search on names, nicknames, e-mails, phones, companies and job titles (`query`, `limit`).                                               |
+| `list_contacts`                | Pages through all contacts, or only one group's members (`page_size`, `page_token`, `sort`, `group`).                                          |
 | `get_contact`                  | Reads one contact by `resource_name` (for example `people/c123`).                                                                              |
 | `create_contact`               | Creates a contact: names, company, job title, notes, e-mails, phones, websites, addresses, groups.                                             |
 | `update_contact`               | Changes only the fields you pass. A list you pass (e-mails, phones...) replaces the existing list.                                             |

@@ -19,7 +19,7 @@
 - `internal/oauth`: authorization server: metadata, CIMD, DCR, consent, Google callback, token, revoke.
 - `internal/obs`: Prometheus metrics, per-call tool logging.
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
-- `internal/tools`: MCP server and ten contact tools.
+- `internal/tools`: MCP server, its `instructions` for client models, and ten contact tools. `list_contacts` `group` filter scans `connections.list` pages (no Google group filter exists) behind its own `g1.` page token.
 - `internal/web`: HTTP mux (MCP, OAuth), `GET /` redirect to `--site-url`, `GET /.well-known/openai-apps-challenge` (only with `--openai-apps-challenge`), metrics basic auth. Renders no page.
 - `plugin/openai/`: ChatGPT/Codex plugin package (`plugin.json`, `mcp.json`, icon); `make plugin-openai` zips it into `dist/`. Submission steps for it and for the Claude connector: `docs/directory-submission.md`.
 - `site/`: Astro website (landing page, privacy policy, terms of service) for the hosted instance; own gates and rules in `site/CLAUDE.md`.
@@ -43,7 +43,7 @@ Other `make` targets: `build`, `coverage` (writes `cover.out`, `cover.html`), `b
 
 - `.github/workflows/test.yml`: push to `main` and PRs; matrix Go `go.mod` + `stable`; runs `make build`, `make test`, `make coverage`, uploads to Codecov on `stable`.
 - `.github/workflows/lint.yml`: push to `main`, PRs, weekly cron, manual; `golangci-lint-action` with `.golangci.yml`. Version not pinned.
-- `.github/workflows/security.yml`: push to `main`, PRs, weekly cron, manual; Bearer, CodeQL, two Trivy jobs (`.trivyignore` referenced, file missing). `govulncheck` job commented out.
+- `.github/workflows/security.yml`: push to `main`, PRs, weekly cron, manual; Bearer, CodeQL, two Trivy jobs (ignore list in `.trivyignore`, empty). `govulncheck` job commented out.
 - `.github/workflows/release.yml`: on a `v*` tag, reruns gofmt, vet, golangci-lint, `go test -race`, then cross-compiles `tar.gz` archives (linux and darwin, amd64 and arm64) with `go build`, and `gh release create` publishes them with `checksums.txt` and generated notes. No Docker image is published.
 - `.github/workflows/dependabot-automerge.yaml`: auto-merge (squash) of Dependabot `github_actions` PRs only.
 

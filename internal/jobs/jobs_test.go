@@ -174,6 +174,28 @@ func waitDeleted(t *testing.T, st *store.Store, users ...store.User) {
 	}
 }
 
+// waitClientDeleted polls until the client is gone. purge deletes clients
+// after users, so users being gone does not mean the client pass ran.
+func waitClientDeleted(t *testing.T, st *store.Store, clientID string) {
+	t.Helper()
+
+	deadline := time.Now().Add(waitTimeout)
+
+	for {
+		_, err := st.ClientByID(context.Background(), clientID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return
+		case err != nil:
+			t.Fatalf("ClientByID: %v", err)
+		case time.Now().After(deadline):
+			t.Fatalf("client %s still present", clientID)
+		}
+
+		time.Sleep(pollEvery)
+	}
+}
+
 func TestJobs_PurgesInactiveAndRevokes(t *testing.T) {
 	t.Parallel()
 
@@ -181,6 +203,7 @@ func TestJobs_PurgesInactiveAndRevokes(t *testing.T) {
 	f := newFixture(t, rv)
 	stop := startRun(t, f, inactiveClock())
 	waitDeleted(t, f.st, f.withToken, f.withoutToken)
+	waitClientDeleted(t, f.st, "client-1")
 	stop()
 
 	if got := rv.revoked(); !slices.Equal(got, []string{"refresh-a"}) {
@@ -189,10 +212,6 @@ func TestJobs_PurgesInactiveAndRevokes(t *testing.T) {
 
 	if _, err := f.st.GoogleToken(context.Background(), f.withToken.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GoogleToken after purge: err = %v, want ErrNotFound", err)
-	}
-
-	if _, err := f.st.ClientByID(context.Background(), "client-1"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("ClientByID after purge: err = %v, want ErrNotFound", err)
 	}
 }
 

@@ -82,6 +82,9 @@ type fakePeople struct {
 	searchStrip bool
 	// errs forces an error for a method name.
 	errs map[string]error
+	// listPage, when positive, makes List return pages of this many contacts
+	// with offset page tokens instead of every contact at once.
+	listPage int
 
 	lastUpdateFields []string
 	lastList         listArgs
@@ -246,7 +249,31 @@ func (f *fakePeople) List(_ context.Context, pageSize int, pageToken, sortOrder 
 		return nil, "", err
 	}
 
-	return f.sorted(), "next", nil
+	if f.listPage <= 0 {
+		return f.sorted(), "next", nil
+	}
+	// Paged mode: tokens are offsets into the sorted contacts, like a stable
+	// Google page sequence, and the requested page size is ignored.
+	all := f.sorted()
+	start := 0
+
+	if pageToken != "" {
+		n, err := strconv.Atoi(pageToken)
+		if err != nil || n < 0 || n > len(all) {
+			return nil, "", contacts.ErrInvalidArgument
+		}
+
+		start = n
+	}
+
+	end := min(start+f.listPage, len(all))
+
+	next := ""
+	if end < len(all) {
+		next = strconv.Itoa(end)
+	}
+
+	return all[start:end], next, nil
 }
 
 func (f *fakePeople) Get(_ context.Context, resourceName string) (contacts.Contact, error) {
