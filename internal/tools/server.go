@@ -107,6 +107,13 @@ func (d Deps) logger() *slog.Logger {
 func NewServer(deps Deps) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: deps.Version, Icons: serverIcons()}, &mcp.ServerOptions{
 		Logger: deps.logger(),
+		// Advertise tools.listChanged explicitly so it holds even if the tool
+		// set becomes dynamic or empty. This replaces the SDK default, which
+		// advertises the deprecated MCP logging capability; the server logs
+		// through slog only and never emits MCP log notifications.
+		Capabilities: &mcp.ServerCapabilities{
+			Tools: &mcp.ToolCapabilities{ListChanged: true},
+		},
 		SupportedProtocolVersions: []string{
 			protocolVersion20260728,
 			protocolVersion20251125,
