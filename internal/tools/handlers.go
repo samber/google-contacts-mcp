@@ -35,6 +35,14 @@ const (
 
 	// writeWarning ends every write tool description (spec §8).
 	writeWarning = " This changes the user's real address book."
+
+	// msgNameRequired answers a group create or rename without a name.
+	msgNameRequired = "name is required"
+	// msgGroupRequired answers a rename that names no group to rename.
+	msgGroupRequired = "group is required"
+	// msgGroupChanged answers a rename whose group changed between the read
+	// and the write; contacts.ErrConflict's own text names a contact.
+	msgGroupChanged = "group changed, retry"
 )
 
 // contactResourceRe and groupResourceRe are the only resource name shapes
@@ -166,6 +174,12 @@ type CreateGroupInput struct {
 	Name string `json:"name" jsonschema:"name of the new group"`
 }
 
+// RenameGroupInput is the rename_contact_group input.
+type RenameGroupInput struct {
+	Group string `json:"group" jsonschema:"group to rename: resource name (contactGroups/abc) or current user group name"`
+	Name  string `json:"name" jsonschema:"new name of the group"`
+}
+
 // ModifyMembersInput is the modify_contact_group_members input.
 type ModifyMembersInput struct {
 	Group  string   `json:"group" jsonschema:"resource name (contactGroups/abc) or user group name"`
@@ -280,6 +294,13 @@ func registerTools(srv *mcp.Server, deps Deps) {
 		Description: "Create an empty contact group (label). Add people with modify_contact_group_members." + writeWarning,
 		Annotations: writes("Create contact group", false),
 	}, handle(deps, true, createGroup))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:  "rename_contact_group",
+		Title: "Rename contact group",
+		Description: "Rename a contact group (label) the user created; its members stay in it. System groups " +
+			"(My Contacts, Starred...) cannot be renamed." + writeWarning,
+		Annotations: writes("Rename contact group", false),
+	}, handle(deps, true, renameGroup))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:  "modify_contact_group_members",
 		Title: "Modify contact group members",
@@ -499,10 +520,35 @@ func listGroups(ctx context.Context, p contacts.People, _ struct{}) (GroupsOutpu
 
 func createGroup(ctx context.Context, p contacts.People, in CreateGroupInput) (GroupOutput, error) {
 	if strings.TrimSpace(in.Name) == "" {
-		return GroupOutput{}, newToolError("name is required")
+		return GroupOutput{}, newToolError(msgNameRequired)
 	}
 
 	g, err := p.CreateGroup(ctx, in.Name)
+	if err != nil {
+		return GroupOutput{}, mapError(err, msgGroupNotFound)
+	}
+
+	return toGroupOutput(g), nil
+}
+
+func renameGroup(ctx context.Context, p contacts.People, in RenameGroupInput) (GroupOutput, error) {
+	if strings.TrimSpace(in.Group) == "" {
+		return GroupOutput{}, newToolError(msgGroupRequired)
+	}
+
+	if strings.TrimSpace(in.Name) == "" {
+		return GroupOutput{}, newToolError(msgNameRequired)
+	}
+
+	if err := checkGroup(in.Group); err != nil {
+		return GroupOutput{}, err
+	}
+
+	g, err := p.RenameGroup(ctx, in.Group, in.Name)
+	if errors.Is(err, contacts.ErrConflict) {
+		return GroupOutput{}, newToolError(msgGroupChanged)
+	}
+
 	if err != nil {
 		return GroupOutput{}, mapError(err, msgGroupNotFound)
 	}

@@ -28,6 +28,10 @@ const (
 	testRefreshToken = "refresh-1"
 	// testGroupFriendsClub is the display name of the user group most group tests use.
 	testGroupFriendsClub = "Friends Club"
+	// testGroupResourceName is the resource name of the testGroupFriendsClub group.
+	testGroupResourceName = "contactGroups/1"
+	// testGroupEtag is the etag the fake returns on a group read.
+	testGroupEtag = "group-etag-1"
 	// testContactA is a contact resource name used as a group member.
 	testContactA = "people/a"
 	// testURLErrOpGet is the Op value net/http sets on url.Error for GET requests.
@@ -44,6 +48,8 @@ const (
 	routeDelete      = "delete"
 	routeListGroups  = "listGroups"
 	routeCreateGroup = "createGroup"
+	routeGetGroup    = "getGroup"
+	routeUpdateGroup = "updateGroup"
 	routeModify      = "modify"
 	routeToken       = "token"
 	routeRevoke      = "revoke"
@@ -124,6 +130,10 @@ func route(r *http.Request) string {
 		return rt
 	}
 
+	if strings.HasPrefix(p, groupsPath) {
+		return groupRoute(p, r.Method)
+	}
+
 	switch {
 	case strings.HasSuffix(p, ":updateContact"):
 		return routeUpdate
@@ -131,12 +141,28 @@ func route(r *http.Request) string {
 		return routeDelete
 	case strings.HasPrefix(p, "/v1/people/"):
 		return routeGet
-	case p == "/v1/contactGroups" && r.Method == http.MethodGet:
-		return routeListGroups
-	case p == "/v1/contactGroups" && r.Method == http.MethodPost:
-		return routeCreateGroup
+	}
+
+	return ""
+}
+
+// groupsPath is the collection path of contact groups; every group route
+// starts with it.
+const groupsPath = "/v1/contactGroups"
+
+// groupRoute maps a contact group request to its route.
+func groupRoute(p, method string) string {
+	switch {
 	case strings.HasSuffix(p, "/members:modify"):
 		return routeModify
+	case p == groupsPath && method == http.MethodGet:
+		return routeListGroups
+	case p == groupsPath && method == http.MethodPost:
+		return routeCreateGroup
+	case p != groupsPath && method == http.MethodGet:
+		return routeGetGroup
+	case p != groupsPath && method == http.MethodPut:
+		return routeUpdateGroup
 	}
 
 	return ""
@@ -191,6 +217,17 @@ func (f *fakeGoogle) serve(w http.ResponseWriter, r *http.Request) {
 		f.servePersonWrite(w, rt, resource, body)
 	case routeDelete, routeModify:
 		f.json(w, struct{}{})
+	case routeListGroups, routeCreateGroup, routeGetGroup, routeUpdateGroup:
+		f.serveGroup(w, rt, resource, body)
+	default:
+		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotImplemented)
+	}
+}
+
+// serveGroup answers the contact group routes other than members:modify.
+func (f *fakeGoogle) serveGroup(w http.ResponseWriter, rt, resource string, body []byte) {
+	switch rt {
 	case routeListGroups:
 		f.mu.Lock()
 		groups := f.groups
@@ -198,9 +235,10 @@ func (f *fakeGoogle) serve(w http.ResponseWriter, r *http.Request) {
 		f.json(w, people.ListContactGroupsResponse{ContactGroups: groups})
 	case routeCreateGroup:
 		f.serveCreateGroup(w, body)
-	default:
-		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusNotImplemented)
+	case routeGetGroup:
+		f.serveGetGroup(w, resource)
+	case routeUpdateGroup:
+		f.serveUpdateGroup(w, body)
 	}
 }
 
@@ -252,6 +290,35 @@ func (f *fakeGoogle) serveCreateGroup(w http.ResponseWriter, body []byte) {
 	}
 
 	f.json(w, people.ContactGroup{ResourceName: "contactGroups/new", Name: req.ContactGroup.Name, FormattedName: req.ContactGroup.Name, GroupType: googleGroupUser})
+}
+
+// serveGetGroup answers one of f.groups with testGroupEtag, or 404.
+func (f *fakeGoogle) serveGetGroup(w http.ResponseWriter, resource string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for _, g := range f.groups {
+		if g.ResourceName == resource {
+			found := *g
+			found.Etag = testGroupEtag
+			f.json(w, found)
+
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNotFound)
+}
+
+// serveUpdateGroup echoes the renamed group as a user group.
+func (f *fakeGoogle) serveUpdateGroup(w http.ResponseWriter, body []byte) {
+	var req people.UpdateContactGroupRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		f.t.Errorf("decode group update: %v", err)
+	}
+
+	g := req.ContactGroup
+	f.json(w, people.ContactGroup{ResourceName: g.ResourceName, Name: g.Name, FormattedName: g.Name, GroupType: googleGroupUser})
 }
 
 func (f *fakeGoogle) serveToken(w http.ResponseWriter) {

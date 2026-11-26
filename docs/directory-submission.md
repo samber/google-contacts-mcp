@@ -33,7 +33,7 @@ Portal steps and the answers this project gives:
 | Step       | Answer                                                                                            |
 | ---------- | ------------------------------------------------------------------------------------------------- |
 | Connection | `https://mcp.google-contacts-mcp.samber.dev/mcp`, one URL for every user.                         |
-| Tools      | Synced from the server. All ten tools carry a title and hints.                                    |
+| Tools      | Synced from the server. All eleven tools carry a title and hints.                                 |
 | Listing    | Text below. Documentation URL: `https://google-contacts-mcp.samber.dev`. Privacy: `/privacy`.     |
 | Use cases  | Reads and writes. Users need a Google account with Google Contacts.                               |
 | Company    | Samuel Berthe, `https://github.com/samber`, contact `hello@samuel-berthe.fr`.                     |

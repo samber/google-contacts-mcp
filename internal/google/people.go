@@ -26,6 +26,9 @@ const (
 	personFields = "names,emailAddresses,phoneNumbers,organizations,urls,addresses,biographies,memberships,metadata"
 	// groupFields is the groupFields/readGroupFields of every group read.
 	groupFields = "groupType,memberCount,name"
+	// groupNameField is the updateGroupFields of a rename: only the name
+	// changes, client data set by other apps stays.
+	groupNameField = "name"
 	// selfResource names the authenticated user in connections.list.
 	selfResource = "people/me"
 	// maxSearchPageSize is the People API maximum for searchContacts.
@@ -63,6 +66,8 @@ const (
 	opUpdate        = "update"
 	opDelete        = "delete"
 	opCreateGroup   = "create group"
+	opGetGroup      = "get group"
+	opRenameGroup   = "rename group"
 	opModifyMembers = "modify group members"
 )
 
@@ -253,7 +258,42 @@ func (p *peopleClient) CreateGroup(ctx context.Context, name string) (contacts.G
 		}).Context(ctx).Do()
 	})
 	if err != nil {
-		return contacts.Group{}, mapError(opCreateGroup, err)
+		return contacts.Group{}, mapGroupWriteError(opCreateGroup, err)
+	}
+
+	return fromGroup(g), nil
+}
+
+// RenameGroup renames a user contact group named by resource name or by
+// user-group display name. System groups are refused before any write.
+func (p *peopleClient) RenameGroup(ctx context.Context, group, name string) (contacts.Group, error) {
+	resourceName, err := p.resolveGroup(ctx, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	// The fresh read gives the group type and the etag sent with the update,
+	// so a group renamed meanwhile elsewhere is reported, not overwritten.
+	current, err := retryRead(ctx, p, opGetGroup, func() (*people.ContactGroup, error) {
+		return p.svc.ContactGroups.Get(resourceName).GroupFields(groupFields).Context(ctx).Do()
+	})
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	if current.GroupType == googleGroupSystem {
+		return contacts.Group{}, contacts.ErrSystemGroup
+	}
+
+	g, err := authed(ctx, p, opRenameGroup, func() (*people.ContactGroup, error) {
+		return p.svc.ContactGroups.Update(resourceName, &people.UpdateContactGroupRequest{
+			ContactGroup:      &people.ContactGroup{ResourceName: resourceName, Etag: current.Etag, Name: name},
+			UpdateGroupFields: groupNameField,
+			ReadGroupFields:   groupFields,
+		}).Context(ctx).Do()
+	})
+	if err != nil {
+		return contacts.Group{}, mapGroupWriteError(opRenameGroup, err)
 	}
 
 	return fromGroup(g), nil
@@ -418,6 +458,16 @@ func mapError(op string, err error) error {
 	}
 
 	return fmt.Errorf("people %s: %w", op, err)
+}
+
+// mapGroupWriteError is mapError for group creation and renaming, where
+// Google answers 409 when another group of the user already has the name.
+func mapGroupWriteError(op string, err error) error {
+	if callStatus(err) == http.StatusConflict {
+		return contacts.ErrGroupNameTaken
+	}
+
+	return mapError(op, err)
 }
 
 // errNoAnswer stands for a call that timed out or whose connection dropped

@@ -57,6 +57,7 @@ export const TOOLS: readonly Tool[] = [
   { name: 'delete_contact', summary: 'Delete a contact for good.', group: 'write' },
   { name: 'list_contact_groups', summary: 'See your labels.', group: 'label' },
   { name: 'create_contact_group', summary: 'Create a label.', group: 'label' },
+  { name: 'rename_contact_group', summary: 'Rename one of your labels.', group: 'label' },
   { name: 'modify_contact_group_members', summary: 'Add contacts to a label, or remove them.', group: 'label' },
 ];
 

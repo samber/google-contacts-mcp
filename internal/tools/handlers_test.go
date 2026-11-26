@@ -49,10 +49,15 @@ const (
 	testTypeWork = "work"
 	// testCompany is the company of fixture contacts.
 	testCompany = "Analytical"
+	// testBadGroupResourceName is a group resource name with a dot segment,
+	// which must be rejected before it reaches Google.
+	testBadGroupResourceName = "contactGroups/../x"
 	// testGroupResourceName is the resource name of the fixture user group.
 	testGroupResourceName = "contactGroups/inv"
 	// toolCreateContactGroup is the MCP tool name that creates a contact group.
 	toolCreateContactGroup = "create_contact_group"
+	// toolRenameContactGroup is the MCP tool name that renames a contact group.
+	toolRenameContactGroup = "rename_contact_group"
 	// toolSearchContacts is the MCP tool name that searches contacts.
 	toolSearchContacts = "search_contacts"
 	// keyStatus is the structured-log and metric label key holding the call outcome.
@@ -67,6 +72,7 @@ const (
 	argEmail        = "email"
 	argGroup        = "group"
 	argValue        = "value"
+	argName         = "name"
 )
 
 // fakePeople is an in-memory contacts.People. Update honours the field mask
@@ -190,7 +196,8 @@ func (f *fakePeople) callsOf(method string) int {
 }
 
 func (f *fakePeople) writes() int {
-	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") + f.callsOf("CreateGroup")
+	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") +
+		f.callsOf("CreateGroup") + f.callsOf("RenameGroup")
 }
 
 func (f *fakePeople) sorted() []contacts.Contact {
@@ -400,6 +407,40 @@ func (f *fakePeople) CreateGroup(_ context.Context, name string) (contacts.Group
 	f.groups = append(f.groups, g)
 
 	return g, nil
+}
+
+// RenameGroup resolves group like Google and refuses system groups.
+func (f *fakePeople) RenameGroup(ctx context.Context, group, name string) (contacts.Group, error) {
+	f.mu.Lock()
+	if err := f.record("RenameGroup"); err != nil {
+		f.mu.Unlock()
+		return contacts.Group{}, err
+	}
+	f.mu.Unlock()
+
+	rn, err := contacts.ResolveGroup(ctx, f, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for i, g := range f.groups {
+		if g.ResourceName != rn {
+			continue
+		}
+
+		if g.Type == contacts.GroupTypeSystem {
+			return contacts.Group{}, contacts.ErrSystemGroup
+		}
+
+		f.groups[i].Name = name
+
+		return f.groups[i], nil
+	}
+
+	return contacts.Group{}, contacts.ErrNotFound
 }
 
 func (f *fakePeople) ModifyMembers(ctx context.Context, group string, add, remove []string) error {
@@ -1012,6 +1053,48 @@ func TestContactGroups(t *testing.T) {
 	h.fail("modify_contact_group_members", map[string]any{argGroup: "contactGroups/gone", argAdd: []string{c.ResourceName}}, "group not found")
 }
 
+func TestRenameContactGroup(t *testing.T) {
+	t.Parallel()
+
+	const newName = "Angels"
+
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{
+		{ResourceName: testGroupResourceName, Name: testGroupName, Type: contacts.GroupTypeUser, MemberCount: 2},
+		{ResourceName: "contactGroups/starred", Name: "Starred", Type: contacts.GroupTypeSystem},
+	})
+
+	var renamed GroupOutput
+	h.ok(toolRenameContactGroup, map[string]any{argGroup: testGroupNameLower, argName: newName}, &renamed)
+
+	if renamed.ResourceName != testGroupResourceName || renamed.Name != newName || renamed.MemberCount != 2 {
+		t.Errorf("renamed = %+v", renamed)
+	}
+
+	h.ok(toolRenameContactGroup, map[string]any{argGroup: testGroupResourceName, argName: testGroupName}, &renamed)
+
+	if renamed.Name != testGroupName {
+		t.Errorf("renamed by resource name = %+v", renamed)
+	}
+
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: "contactGroups/starred", argName: newName}, "system groups cannot be renamed")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: "nope", argName: newName}, `group "nope" not found`)
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupName, argName: " "}, "name is required")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: "", argName: newName}, "group is required")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testBadGroupResourceName, argName: newName},
+		`group resource name must look like "contactGroups/abc"`)
+
+	googleErrs := map[error]string{
+		contacts.ErrNotFound:       "group not found",
+		contacts.ErrConflict:       "group changed, retry",
+		contacts.ErrGroupNameTaken: "a group with this name already exists",
+	}
+	for err, want := range googleErrs {
+		h.people.setErr("RenameGroup", fmt.Errorf("people rename group: %w", err))
+		h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupResourceName, argName: newName}, want)
+	}
+}
+
 func TestToolErrorsHideUnknownCauses(t *testing.T) {
 	t.Parallel()
 
@@ -1055,7 +1138,10 @@ func TestToolAnnotations(t *testing.T) {
 	}
 
 	reads := []string{toolSearchContacts, "list_contacts", "get_contact", "list_contact_groups"}
-	writes := []string{"create_contact", "update_contact", "upsert_contact_by_email", toolCreateContactGroup, "modify_contact_group_members"}
+	writes := []string{
+		"create_contact", "update_contact", "upsert_contact_by_email",
+		toolCreateContactGroup, toolRenameContactGroup, "modify_contact_group_members",
+	}
 
 	got := map[string]*mcp.Tool{}
 	for _, tool := range res.Tools {
@@ -1164,7 +1250,7 @@ func TestCheckGroup(t *testing.T) {
 		}
 	}
 
-	for _, g := range []string{"contactGroups/", "contactGroups/../x", "contactGroups/a?b=1", "contactGroups/a/members", "contactGroups/a b"} {
+	for _, g := range []string{"contactGroups/", testBadGroupResourceName, "contactGroups/a?b=1", "contactGroups/a/members", "contactGroups/a b"} {
 		if err := checkGroup(g); err == nil {
 			t.Errorf("checkGroup(%q) = nil, want an error", g)
 		}
@@ -1184,7 +1270,7 @@ func TestResourceNames_RejectedBeforeGoogle(t *testing.T) {
 	}
 
 	wantGroup := `group resource name must look like "contactGroups/abc"`
-	h.fail("modify_contact_group_members", map[string]any{argGroup: "contactGroups/../x", argAdd: []string{testResourceName}}, wantGroup)
+	h.fail("modify_contact_group_members", map[string]any{argGroup: testBadGroupResourceName, argAdd: []string{testResourceName}}, wantGroup)
 	h.fail("create_contact", map[string]any{argGivenName: "A", "groups": []string{"contactGroups/a?b=1"}}, wantGroup)
 	h.fail("upsert_contact_by_email", map[string]any{argEmail: "a@x.io", argGroup: "contactGroups/a/b"}, wantGroup)
 
