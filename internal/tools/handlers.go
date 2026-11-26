@@ -38,7 +38,7 @@ const (
 
 	// msgNameRequired answers a group create or rename without a name.
 	msgNameRequired = "name is required"
-	// msgGroupRequired answers a rename that names no group to rename.
+	// msgGroupRequired answers a group rename or delete that names no group.
 	msgGroupRequired = "group is required"
 	// msgGroupChanged answers a rename whose group changed between the read
 	// and the write; contacts.ErrConflict's own text names a contact.
@@ -180,6 +180,20 @@ type RenameGroupInput struct {
 	Name  string `json:"name" jsonschema:"new name of the group"`
 }
 
+// DeleteGroupInput is the delete_contact_group input.
+type DeleteGroupInput struct {
+	Group          string `json:"group" jsonschema:"group to delete: resource name (contactGroups/abc) or user group name"`
+	DeleteContacts bool   `json:"delete_contacts,omitempty" jsonschema:"also delete every member contact permanently; default false keeps them in the address book"`
+}
+
+// DeleteGroupOutput is the delete_contact_group output.
+type DeleteGroupOutput struct {
+	ResourceName    string `json:"resource_name"`
+	Name            string `json:"name"`
+	MemberCount     int    `json:"member_count" jsonschema:"members the group had just before deletion"`
+	ContactsDeleted bool   `json:"contacts_deleted" jsonschema:"true when the members were deleted too, false when they stay in the address book"`
+}
+
 // ModifyMembersInput is the modify_contact_group_members input.
 type ModifyMembersInput struct {
 	Group  string   `json:"group" jsonschema:"resource name (contactGroups/abc) or user group name"`
@@ -200,6 +214,7 @@ func (o SearchOutput) resultCount() int      { return len(o.Contacts) }
 func (o ListOutput) resultCount() int        { return len(o.Contacts) }
 func (ContactOutput) resultCount() int       { return 1 }
 func (DeleteOutput) resultCount() int        { return 0 }
+func (DeleteGroupOutput) resultCount() int   { return 0 }
 func (o GroupsOutput) resultCount() int      { return len(o.Groups) }
 func (GroupOutput) resultCount() int         { return 1 }
 func (ModifyMembersOutput) resultCount() int { return 1 }
@@ -301,6 +316,14 @@ func registerTools(srv *mcp.Server, deps Deps) {
 			"(My Contacts, Starred...) cannot be renamed." + writeWarning,
 		Annotations: writes("Rename contact group", false),
 	}, handle(deps, true, renameGroup))
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:  "delete_contact_group",
+		Title: "Delete contact group",
+		Description: "Delete a contact group (label) the user created. Its members stay in the address book " +
+			"unless delete_contacts is true, which deletes every member permanently on every synced device. " +
+			"System groups (My Contacts, Starred...) cannot be deleted." + writeWarning,
+		Annotations: writes("Delete contact group", true),
+	}, handle(deps, true, deleteGroup))
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:  "modify_contact_group_members",
 		Title: "Modify contact group members",
@@ -554,6 +577,30 @@ func renameGroup(ctx context.Context, p contacts.People, in RenameGroupInput) (G
 	}
 
 	return toGroupOutput(g), nil
+}
+
+func deleteGroup(ctx context.Context, p contacts.People, in DeleteGroupInput) (DeleteGroupOutput, error) {
+	if strings.TrimSpace(in.Group) == "" {
+		return DeleteGroupOutput{}, newToolError(msgGroupRequired)
+	}
+
+	if err := checkGroup(in.Group); err != nil {
+		return DeleteGroupOutput{}, err
+	}
+
+	g, err := p.DeleteGroup(ctx, in.Group, in.DeleteContacts)
+	if err != nil {
+		return DeleteGroupOutput{}, mapError(err, msgGroupNotFound)
+	}
+
+	out := DeleteGroupOutput{
+		ResourceName:    g.ResourceName,
+		Name:            g.Name,
+		MemberCount:     g.MemberCount,
+		ContactsDeleted: in.DeleteContacts,
+	}
+
+	return out, nil
 }
 
 func modifyMembers(ctx context.Context, p contacts.People, in ModifyMembersInput) (ModifyMembersOutput, error) {

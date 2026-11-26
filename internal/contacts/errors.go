@@ -18,9 +18,9 @@ var (
 	// ErrInvalidArgument is returned when Google rejects a request as
 	// malformed (HTTP 400 other than a stale etag), e.g. a bad page token.
 	ErrInvalidArgument = errors.New("invalid argument")
-	// ErrSystemGroup is returned when a rename targets a Google-managed group
-	// (My Contacts, Starred...), whose name only Google sets.
-	ErrSystemGroup = errors.New("system groups cannot be renamed")
+	// ErrSystemGroup is returned when a rename or delete targets a
+	// Google-managed group (My Contacts, Starred...), which only Google changes.
+	ErrSystemGroup = errors.New("system groups cannot be renamed or deleted")
 	// ErrGroupNameTaken is returned when Google answers 409 to a group create
 	// or rename: group names are unique per user.
 	ErrGroupNameTaken = errors.New("a group with this name already exists")

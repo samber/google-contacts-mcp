@@ -50,6 +50,7 @@ const (
 	routeCreateGroup = "createGroup"
 	routeGetGroup    = "getGroup"
 	routeUpdateGroup = "updateGroup"
+	routeDeleteGroup = "deleteGroup"
 	routeModify      = "modify"
 	routeToken       = "token"
 	routeRevoke      = "revoke"
@@ -163,6 +164,8 @@ func groupRoute(p, method string) string {
 		return routeGetGroup
 	case p != groupsPath && method == http.MethodPut:
 		return routeUpdateGroup
+	case p != groupsPath && method == http.MethodDelete:
+		return routeDeleteGroup
 	}
 
 	return ""
@@ -217,7 +220,7 @@ func (f *fakeGoogle) serve(w http.ResponseWriter, r *http.Request) {
 		f.servePersonWrite(w, rt, resource, body)
 	case routeDelete, routeModify:
 		f.json(w, struct{}{})
-	case routeListGroups, routeCreateGroup, routeGetGroup, routeUpdateGroup:
+	case routeListGroups, routeCreateGroup, routeGetGroup, routeUpdateGroup, routeDeleteGroup:
 		f.serveGroup(w, rt, resource, body)
 	default:
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -239,6 +242,8 @@ func (f *fakeGoogle) serveGroup(w http.ResponseWriter, rt, resource string, body
 		f.serveGetGroup(w, resource)
 	case routeUpdateGroup:
 		f.serveUpdateGroup(w, body)
+	case routeDeleteGroup:
+		f.json(w, struct{}{})
 	}
 }
 

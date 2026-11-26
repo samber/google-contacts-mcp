@@ -430,6 +430,46 @@ func TestRenameGroup(t *testing.T) {
 	}
 }
 
+func TestDeleteGroup(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.fake.groups = []*people.ContactGroup{
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser, MemberCount: 3},
+		{ResourceName: "contactGroups/starred", Name: "starred", FormattedName: "Starred", GroupType: googleGroupSystem},
+	}
+	p := env.people(t)
+	ctx := context.Background()
+
+	for _, deleteContacts := range []bool{false, true} {
+		g, err := p.DeleteGroup(ctx, "friends club", deleteContacts)
+		if err != nil {
+			t.Fatalf("DeleteGroup(%v): %v", deleteContacts, err)
+		}
+
+		if g.ResourceName != testGroupResourceName || g.Name != testGroupFriendsClub || g.MemberCount != 3 {
+			t.Errorf("DeleteGroup(%v) = %+v, want the group as read before deletion", deleteContacts, g)
+		}
+
+		query, _, _, path := env.fake.last(routeDeleteGroup)
+		if v, _ := url.ParseQuery(query); path != groupsPath+"/1" || v.Get("deleteContacts") != strconv.FormatBool(deleteContacts) {
+			t.Errorf("delete request = %s?%s, want deleteContacts=%v", path, query, deleteContacts)
+		}
+	}
+
+	if _, err := p.DeleteGroup(ctx, "contactGroups/starred", false); !errors.Is(err, contacts.ErrSystemGroup) {
+		t.Errorf("delete system group: err = %v, want ErrSystemGroup", err)
+	}
+
+	if _, err := p.DeleteGroup(ctx, "contactGroups/gone", false); !errors.Is(err, contacts.ErrNotFound) {
+		t.Errorf("delete missing group: err = %v, want ErrNotFound", err)
+	}
+
+	if n := env.fake.count(routeDeleteGroup); n != 2 {
+		t.Errorf("delete calls = %d, want 2: system and missing groups must not reach the delete", n)
+	}
+}
+
 // assertRenameSent checks the last group read and the update that followed:
 // path, new name, the read's etag and the field masks.
 func assertRenameSent(t *testing.T, env *testEnv, newName string) {

@@ -157,7 +157,8 @@ Contact fields handled in v1: names (given, family, display), e-mails, phones, o
 | `delete_contact` | `resource_name`. Destructive. |
 | `list_contact_groups` | User groups and system groups. |
 | `create_contact_group` | `name`. Google 409 (name already used) returns "a group with this name already exists". |
-| `rename_contact_group` | `group`, `name`. Reads the group first: a system group returns "system groups cannot be renamed" before any write; a user group is renamed with `contactGroups.update`, sending the etag just read and `updateGroupFields=name`. Google 409 returns "a group with this name already exists". |
+| `rename_contact_group` | `group`, `name`. Reads the group first: a system group returns "system groups cannot be renamed or deleted" before any write; a user group is renamed with `contactGroups.update`, sending the etag just read and `updateGroupFields=name`. Google 409 returns "a group with this name already exists". |
+| `delete_contact_group` | `group`, `delete_contacts` (default `false`). Destructive. Reads the group first, refusing system groups like `rename_contact_group`, then calls `contactGroups.delete` with `deleteContacts`. False: members stay in the address book and only lose the label. True: Google deletes every member. Returns the group as read, its member count and `contacts_deleted`. |
 | `modify_contact_group_members` | `group`, `add[]`, `remove[]` resource names. |
 
 ### 8.1 upsert_contact_by_email
@@ -174,7 +175,7 @@ Input: `email` (required) plus any handled field, plus optional `group`.
 4. Several matches: no change. Result `ambiguous` with the candidates (resource name, display name, organization).
 5. When `group` is set, ensure membership in every outcome except `ambiguous`.
 
-`group` arguments (here and in `create_contact`, `rename_contact_group`, `modify_contact_group_members`) accept a resource name (`contactGroups/abc`) or a display name. A display name matches user groups only (not system groups), case-insensitively; zero or several matches return an error. No auto-create: the caller uses `create_contact_group`. (My call.)
+`group` arguments (here and in `create_contact`, `rename_contact_group`, `delete_contact_group`, `modify_contact_group_members`) accept a resource name (`contactGroups/abc`) or a display name. A display name matches user groups only (not system groups), case-insensitively; zero or several matches return an error. No auto-create: the caller uses `create_contact_group`. (My call.)
 
 Known limit: search is eventually consistent after writes. Two upserts of the same new e-mail within minutes can create two contacts. Accepted by the user; the README sync prompt groups senders by e-mail before upserting.
 

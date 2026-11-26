@@ -58,6 +58,12 @@ const (
 	toolCreateContactGroup = "create_contact_group"
 	// toolRenameContactGroup is the MCP tool name that renames a contact group.
 	toolRenameContactGroup = "rename_contact_group"
+	// toolDeleteContactGroup is the MCP tool name that deletes a contact group.
+	toolDeleteContactGroup = "delete_contact_group"
+	// testUnknownGroup is a group name that matches no user group.
+	testUnknownGroup = "nope"
+	// testSystemGroupStarred is the resource name of Google's Starred system group.
+	testSystemGroupStarred = "contactGroups/starred"
 	// toolSearchContacts is the MCP tool name that searches contacts.
 	toolSearchContacts = "search_contacts"
 	// keyStatus is the structured-log and metric label key holding the call outcome.
@@ -197,7 +203,7 @@ func (f *fakePeople) callsOf(method string) int {
 
 func (f *fakePeople) writes() int {
 	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") +
-		f.callsOf("CreateGroup") + f.callsOf("RenameGroup")
+		f.callsOf("CreateGroup") + f.callsOf("RenameGroup") + f.callsOf("DeleteGroup")
 }
 
 func (f *fakePeople) sorted() []contacts.Contact {
@@ -441,6 +447,54 @@ func (f *fakePeople) RenameGroup(ctx context.Context, group, name string) (conta
 	}
 
 	return contacts.Group{}, contacts.ErrNotFound
+}
+
+// DeleteGroup resolves group like Google, refuses system groups, and either
+// deletes the members or only drops their membership.
+func (f *fakePeople) DeleteGroup(ctx context.Context, group string, deleteContacts bool) (contacts.Group, error) {
+	f.mu.Lock()
+	if err := f.record("DeleteGroup"); err != nil {
+		f.mu.Unlock()
+		return contacts.Group{}, err
+	}
+	f.mu.Unlock()
+
+	rn, err := contacts.ResolveGroup(ctx, f, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	i := slices.IndexFunc(f.groups, func(g contacts.Group) bool { return g.ResourceName == rn })
+	if i < 0 {
+		return contacts.Group{}, contacts.ErrNotFound
+	}
+
+	g := f.groups[i]
+	if g.Type == contacts.GroupTypeSystem {
+		return contacts.Group{}, contacts.ErrSystemGroup
+	}
+
+	f.groups = slices.Delete(f.groups, i, i+1)
+
+	for name, c := range f.contacts {
+		if !slices.Contains(c.Groups, rn) {
+			continue
+		}
+
+		if deleteContacts {
+			delete(f.contacts, name)
+
+			continue
+		}
+
+		c.Groups = slices.DeleteFunc(slices.Clone(c.Groups), func(m string) bool { return m == rn })
+		f.contacts[name] = c
+	}
+
+	return g, nil
 }
 
 func (f *fakePeople) ModifyMembers(ctx context.Context, group string, add, remove []string) error {
@@ -1046,7 +1100,7 @@ func TestContactGroups(t *testing.T) {
 		t.Errorf("modify = %+v", mod)
 	}
 
-	h.fail("modify_contact_group_members", map[string]any{argGroup: "nope", argAdd: []string{c.ResourceName}}, `group "nope" not found`)
+	h.fail("modify_contact_group_members", map[string]any{argGroup: testUnknownGroup, argAdd: []string{c.ResourceName}}, `group "nope" not found`)
 	h.fail("modify_contact_group_members", map[string]any{argGroup: testGroupNameLower, argAdd: []string{"people/c999"}}, "contact not found")
 	h.fail("modify_contact_group_members", map[string]any{argGroup: testGroupNameLower}, "add or remove must list at least one contact")
 	h.people.setErr("ModifyMembers", contacts.ErrNotFound)
@@ -1061,7 +1115,7 @@ func TestRenameContactGroup(t *testing.T) {
 	h := newHarness(t)
 	h.people.setGroups([]contacts.Group{
 		{ResourceName: testGroupResourceName, Name: testGroupName, Type: contacts.GroupTypeUser, MemberCount: 2},
-		{ResourceName: "contactGroups/starred", Name: "Starred", Type: contacts.GroupTypeSystem},
+		{ResourceName: testSystemGroupStarred, Name: "Starred", Type: contacts.GroupTypeSystem},
 	})
 
 	var renamed GroupOutput
@@ -1077,8 +1131,8 @@ func TestRenameContactGroup(t *testing.T) {
 		t.Errorf("renamed by resource name = %+v", renamed)
 	}
 
-	h.fail(toolRenameContactGroup, map[string]any{argGroup: "contactGroups/starred", argName: newName}, "system groups cannot be renamed")
-	h.fail(toolRenameContactGroup, map[string]any{argGroup: "nope", argName: newName}, `group "nope" not found`)
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testSystemGroupStarred, argName: newName}, "system groups cannot be renamed or deleted")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testUnknownGroup, argName: newName}, `group "nope" not found`)
 	h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupName, argName: " "}, "name is required")
 	h.fail(toolRenameContactGroup, map[string]any{argGroup: "", argName: newName}, "group is required")
 	h.fail(toolRenameContactGroup, map[string]any{argGroup: testBadGroupResourceName, argName: newName},
@@ -1093,6 +1147,48 @@ func TestRenameContactGroup(t *testing.T) {
 		h.people.setErr("RenameGroup", fmt.Errorf("people rename group: %w", err))
 		h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupResourceName, argName: newName}, want)
 	}
+}
+
+func TestDeleteContactGroup(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{
+		{ResourceName: testGroupResourceName, Name: testGroupName, Type: contacts.GroupTypeUser, MemberCount: 1},
+		{ResourceName: "contactGroups/old", Name: "Old", Type: contacts.GroupTypeUser, MemberCount: 1},
+		{ResourceName: testSystemGroupStarred, Name: "Starred", Type: contacts.GroupTypeSystem},
+	})
+	kept := h.people.put(contacts.Contact{GivenName: testGivenName, Groups: []string{testGroupResourceName}})
+	gone := h.people.put(contacts.Contact{GivenName: testFamilyName, Groups: []string{"contactGroups/old"}})
+
+	var out DeleteGroupOutput
+	h.ok(toolDeleteContactGroup, map[string]any{argGroup: testGroupNameLower}, &out)
+
+	if out.ResourceName != testGroupResourceName || out.Name != testGroupName || out.MemberCount != 1 || out.ContactsDeleted {
+		t.Errorf("delete keeping members = %+v", out)
+	}
+
+	if c, ok := h.people.lookup(kept.ResourceName); !ok || slices.Contains(c.Groups, testGroupResourceName) {
+		t.Errorf("kept member = %+v (found %v), want it kept without the group", c, ok)
+	}
+
+	h.ok(toolDeleteContactGroup, map[string]any{argGroup: "contactGroups/old", "delete_contacts": true}, &out)
+
+	if !out.ContactsDeleted {
+		t.Errorf("delete with members = %+v, want contacts_deleted", out)
+	}
+
+	if _, ok := h.people.lookup(gone.ResourceName); ok {
+		t.Error("member of a group deleted with delete_contacts is still stored")
+	}
+
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testSystemGroupStarred}, "system groups cannot be renamed or deleted")
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testUnknownGroup}, `group "nope" not found`)
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: " "}, "group is required")
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testBadGroupResourceName}, `group resource name must look like "contactGroups/abc"`)
+
+	h.people.setErr("DeleteGroup", fmt.Errorf("people delete group: %w", contacts.ErrNotFound))
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: "contactGroups/gone"}, "group not found")
 }
 
 func TestToolErrorsHideUnknownCauses(t *testing.T) {
@@ -1148,8 +1244,8 @@ func TestToolAnnotations(t *testing.T) {
 		got[tool.Name] = tool
 	}
 
-	if len(got) != len(reads)+len(writes)+1 {
-		t.Errorf("tools = %d, want %d", len(got), len(reads)+len(writes)+1)
+	if want := len(reads) + len(writes) + len(destructiveTools); len(got) != want {
+		t.Errorf("tools = %d, want %d", len(got), want)
 	}
 
 	checkReadAnnotations(t, got, reads)
@@ -1212,13 +1308,18 @@ func checkWriteAnnotations(t *testing.T, got map[string]*mcp.Tool, names []strin
 }
 
 // checkDeleteAnnotations requires the destructive hint on delete_contact.
+// destructiveTools are the tools clients must confirm before running.
+var destructiveTools = []string{"delete_contact", toolDeleteContactGroup}
+
 func checkDeleteAnnotations(t *testing.T, got map[string]*mcp.Tool) {
 	t.Helper()
 
-	del := got["delete_contact"]
-	if del == nil || del.Annotations == nil || del.Annotations.ReadOnlyHint ||
-		del.Annotations.DestructiveHint == nil || !*del.Annotations.DestructiveHint {
-		t.Error("delete_contact: want destructiveHint true")
+	for _, name := range destructiveTools {
+		del := got[name]
+		if del == nil || del.Annotations == nil || del.Annotations.ReadOnlyHint ||
+			del.Annotations.DestructiveHint == nil || !*del.Annotations.DestructiveHint {
+			t.Errorf("%s: want destructiveHint true", name)
+		}
 	}
 }
 

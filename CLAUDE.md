@@ -19,7 +19,7 @@
 - `internal/oauth`: authorization server: metadata, CIMD, DCR, consent, Google callback, token, revoke.
 - `internal/obs`: Prometheus metrics, per-call tool logging.
 - `internal/store`: SQLite store, embedded migrations, fosite storage, users and encrypted Google tokens.
-- `internal/tools`: MCP server, its `instructions` for client models, and eleven contact tools. `list_contacts` `group` filter scans `connections.list` pages (no Google group filter exists) behind its own `g1.` page token.
+- `internal/tools`: MCP server, its `instructions` for client models, and twelve contact tools. `list_contacts` `group` filter scans `connections.list` pages (no Google group filter exists) behind its own `g1.` page token.
 - `internal/web`: HTTP mux (MCP, OAuth), `GET /` redirect to `--site-url`, `GET /.well-known/openai-apps-challenge` (only with `--openai-apps-challenge`), metrics basic auth. Renders no page.
 - `plugin/openai/`: ChatGPT/Codex plugin package (`plugin.json`, `mcp.json`, icon); `make plugin-openai` zips it into `dist/`. Submission steps for it and for the Claude connector: `docs/directory-submission.md`.
 - `site/`: Astro website (landing page, privacy policy, terms of service) for the hosted instance; own gates and rules in `site/CLAUDE.md`.

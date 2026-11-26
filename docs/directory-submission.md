@@ -33,7 +33,7 @@ Portal steps and the answers this project gives:
 | Step       | Answer                                                                                            |
 | ---------- | ------------------------------------------------------------------------------------------------- |
 | Connection | `https://mcp.google-contacts-mcp.samber.dev/mcp`, one URL for every user.                         |
-| Tools      | Synced from the server. All eleven tools carry a title and hints.                                 |
+| Tools      | Synced from the server. All twelve tools carry a title and hints.                                 |
 | Listing    | Text below. Documentation URL: `https://google-contacts-mcp.samber.dev`. Privacy: `/privacy`.     |
 | Use cases  | Reads and writes. Users need a Google account with Google Contacts.                               |
 | Company    | Samuel Berthe, `https://github.com/samber`, contact `hello@samuel-berthe.fr`.                     |
@@ -45,7 +45,7 @@ Listing text (limits: name 100, one-liner 200, description 2,000 characters):
 
 - Name: `Google Contacts`
 - One-liner: `Search, add, update and organize your Google Contacts from Claude.`
-- Description: `Ask Claude to find a phone number or e-mail, add a contact, fix a job title, merge new details into an existing contact by e-mail, or sort contacts into groups. Sign in with your Google account and grant access to Google Contacts only. Contacts are read and written live through the Google People API and are never stored on the server. Tools that change your address book say so, and deleting a contact is flagged as destructive so Claude asks first.`
+- Description: `Ask Claude to find a phone number or e-mail, add a contact, fix a job title, merge new details into an existing contact by e-mail, or sort contacts into groups. Sign in with your Google account and grant access to Google Contacts only. Contacts are read and written live through the Google People API and are never stored on the server. Tools that change your address book say so, and deleting a contact or a group is flagged as destructive so Claude asks first.`
 
 Claude's OAuth callback is `https://claude.ai/api/mcp/auth_callback`. The server accepts any `https` redirect URI from a registered or CIMD client, so nothing to allow-list.
 
