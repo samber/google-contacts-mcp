@@ -26,6 +26,9 @@ const (
 	personFields = "names,emailAddresses,phoneNumbers,organizations,urls,addresses,biographies,memberships,metadata"
 	// groupFields is the groupFields/readGroupFields of every group read.
 	groupFields = "groupType,memberCount,name"
+	// groupNameField is the updateGroupFields of a rename: only the name
+	// changes, client data set by other apps stays.
+	groupNameField = "name"
 	// selfResource names the authenticated user in connections.list.
 	selfResource = "people/me"
 	// maxSearchPageSize is the People API maximum for searchContacts.
@@ -63,6 +66,9 @@ const (
 	opUpdate        = "update"
 	opDelete        = "delete"
 	opCreateGroup   = "create group"
+	opGetGroup      = "get group"
+	opRenameGroup   = "rename group"
+	opDeleteGroup   = "delete group"
 	opModifyMembers = "modify group members"
 )
 
@@ -253,10 +259,77 @@ func (p *peopleClient) CreateGroup(ctx context.Context, name string) (contacts.G
 		}).Context(ctx).Do()
 	})
 	if err != nil {
-		return contacts.Group{}, mapError(opCreateGroup, err)
+		return contacts.Group{}, mapGroupWriteError(opCreateGroup, err)
 	}
 
 	return fromGroup(g), nil
+}
+
+// RenameGroup renames a user contact group named by resource name or by
+// user-group display name. System groups are refused before any write.
+func (p *peopleClient) RenameGroup(ctx context.Context, group, name string) (contacts.Group, error) {
+	current, err := p.userGroup(ctx, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	// The etag of the fresh read makes Google report a group renamed
+	// meanwhile elsewhere instead of overwriting it.
+	g, err := authed(ctx, p, opRenameGroup, func() (*people.ContactGroup, error) {
+		return p.svc.ContactGroups.Update(current.ResourceName, &people.UpdateContactGroupRequest{
+			ContactGroup:      &people.ContactGroup{ResourceName: current.ResourceName, Etag: current.Etag, Name: name},
+			UpdateGroupFields: groupNameField,
+			ReadGroupFields:   groupFields,
+		}).Context(ctx).Do()
+	})
+	if err != nil {
+		return contacts.Group{}, mapGroupWriteError(opRenameGroup, err)
+	}
+
+	return fromGroup(g), nil
+}
+
+// DeleteGroup deletes a user contact group named by resource name or by
+// user-group display name, and returns it as read just before. With
+// deleteContacts, Google also deletes every member contact; without it, the
+// members only lose the label. System groups are refused before any write.
+func (p *peopleClient) DeleteGroup(ctx context.Context, group string, deleteContacts bool) (contacts.Group, error) {
+	current, err := p.userGroup(ctx, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	_, err = authed(ctx, p, opDeleteGroup, func() (*people.Empty, error) {
+		return p.svc.ContactGroups.Delete(current.ResourceName).DeleteContacts(deleteContacts).Context(ctx).Do()
+	})
+	if err != nil {
+		return contacts.Group{}, mapError(opDeleteGroup, err)
+	}
+
+	return fromGroup(current), nil
+}
+
+// userGroup resolves group, then reads it fresh for its type, etag and
+// member count. A system group is contacts.ErrSystemGroup, so no write
+// reaches Google for it.
+func (p *peopleClient) userGroup(ctx context.Context, group string) (*people.ContactGroup, error) {
+	resourceName, err := p.resolveGroup(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+
+	current, err := retryRead(ctx, p, opGetGroup, func() (*people.ContactGroup, error) {
+		return p.svc.ContactGroups.Get(resourceName).GroupFields(groupFields).Context(ctx).Do()
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if current.GroupType == googleGroupSystem {
+		return nil, contacts.ErrSystemGroup
+	}
+
+	return current, nil
 }
 
 // ModifyMembers adds and removes contacts in a group named by resource name
@@ -418,6 +491,16 @@ func mapError(op string, err error) error {
 	}
 
 	return fmt.Errorf("people %s: %w", op, err)
+}
+
+// mapGroupWriteError is mapError for group creation and renaming, where
+// Google answers 409 when another group of the user already has the name.
+func mapGroupWriteError(op string, err error) error {
+	if callStatus(err) == http.StatusConflict {
+		return contacts.ErrGroupNameTaken
+	}
+
+	return mapError(op, err)
 }
 
 // errNoAnswer stands for a call that timed out or whose connection dropped

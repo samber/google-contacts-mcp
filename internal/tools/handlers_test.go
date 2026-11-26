@@ -49,10 +49,21 @@ const (
 	testTypeWork = "work"
 	// testCompany is the company of fixture contacts.
 	testCompany = "Analytical"
+	// testBadGroupResourceName is a group resource name with a dot segment,
+	// which must be rejected before it reaches Google.
+	testBadGroupResourceName = "contactGroups/../x"
 	// testGroupResourceName is the resource name of the fixture user group.
 	testGroupResourceName = "contactGroups/inv"
 	// toolCreateContactGroup is the MCP tool name that creates a contact group.
 	toolCreateContactGroup = "create_contact_group"
+	// toolRenameContactGroup is the MCP tool name that renames a contact group.
+	toolRenameContactGroup = "rename_contact_group"
+	// toolDeleteContactGroup is the MCP tool name that deletes a contact group.
+	toolDeleteContactGroup = "delete_contact_group"
+	// testUnknownGroup is a group name that matches no user group.
+	testUnknownGroup = "nope"
+	// testSystemGroupStarred is the resource name of Google's Starred system group.
+	testSystemGroupStarred = "contactGroups/starred"
 	// toolSearchContacts is the MCP tool name that searches contacts.
 	toolSearchContacts = "search_contacts"
 	// keyStatus is the structured-log and metric label key holding the call outcome.
@@ -67,6 +78,7 @@ const (
 	argEmail        = "email"
 	argGroup        = "group"
 	argValue        = "value"
+	argName         = "name"
 )
 
 // fakePeople is an in-memory contacts.People. Update honours the field mask
@@ -190,7 +202,8 @@ func (f *fakePeople) callsOf(method string) int {
 }
 
 func (f *fakePeople) writes() int {
-	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") + f.callsOf("CreateGroup")
+	return f.callsOf("Create") + f.callsOf("Update") + f.callsOf("Delete") + f.callsOf("ModifyMembers") +
+		f.callsOf("CreateGroup") + f.callsOf("RenameGroup") + f.callsOf("DeleteGroup")
 }
 
 func (f *fakePeople) sorted() []contacts.Contact {
@@ -398,6 +411,88 @@ func (f *fakePeople) CreateGroup(_ context.Context, name string) (contacts.Group
 
 	g := contacts.Group{ResourceName: "contactGroups/g" + strconv.Itoa(len(f.groups)+1), Name: name, Type: contacts.GroupTypeUser}
 	f.groups = append(f.groups, g)
+
+	return g, nil
+}
+
+// RenameGroup resolves group like Google and refuses system groups.
+func (f *fakePeople) RenameGroup(ctx context.Context, group, name string) (contacts.Group, error) {
+	f.mu.Lock()
+	if err := f.record("RenameGroup"); err != nil {
+		f.mu.Unlock()
+		return contacts.Group{}, err
+	}
+	f.mu.Unlock()
+
+	rn, err := contacts.ResolveGroup(ctx, f, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for i, g := range f.groups {
+		if g.ResourceName != rn {
+			continue
+		}
+
+		if g.Type == contacts.GroupTypeSystem {
+			return contacts.Group{}, contacts.ErrSystemGroup
+		}
+
+		f.groups[i].Name = name
+
+		return f.groups[i], nil
+	}
+
+	return contacts.Group{}, contacts.ErrNotFound
+}
+
+// DeleteGroup resolves group like Google, refuses system groups, and either
+// deletes the members or only drops their membership.
+func (f *fakePeople) DeleteGroup(ctx context.Context, group string, deleteContacts bool) (contacts.Group, error) {
+	f.mu.Lock()
+	if err := f.record("DeleteGroup"); err != nil {
+		f.mu.Unlock()
+		return contacts.Group{}, err
+	}
+	f.mu.Unlock()
+
+	rn, err := contacts.ResolveGroup(ctx, f, group)
+	if err != nil {
+		return contacts.Group{}, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	i := slices.IndexFunc(f.groups, func(g contacts.Group) bool { return g.ResourceName == rn })
+	if i < 0 {
+		return contacts.Group{}, contacts.ErrNotFound
+	}
+
+	g := f.groups[i]
+	if g.Type == contacts.GroupTypeSystem {
+		return contacts.Group{}, contacts.ErrSystemGroup
+	}
+
+	f.groups = slices.Delete(f.groups, i, i+1)
+
+	for name, c := range f.contacts {
+		if !slices.Contains(c.Groups, rn) {
+			continue
+		}
+
+		if deleteContacts {
+			delete(f.contacts, name)
+
+			continue
+		}
+
+		c.Groups = slices.DeleteFunc(slices.Clone(c.Groups), func(m string) bool { return m == rn })
+		f.contacts[name] = c
+	}
 
 	return g, nil
 }
@@ -1005,11 +1100,95 @@ func TestContactGroups(t *testing.T) {
 		t.Errorf("modify = %+v", mod)
 	}
 
-	h.fail("modify_contact_group_members", map[string]any{argGroup: "nope", argAdd: []string{c.ResourceName}}, `group "nope" not found`)
+	h.fail("modify_contact_group_members", map[string]any{argGroup: testUnknownGroup, argAdd: []string{c.ResourceName}}, `group "nope" not found`)
 	h.fail("modify_contact_group_members", map[string]any{argGroup: testGroupNameLower, argAdd: []string{"people/c999"}}, "contact not found")
 	h.fail("modify_contact_group_members", map[string]any{argGroup: testGroupNameLower}, "add or remove must list at least one contact")
 	h.people.setErr("ModifyMembers", contacts.ErrNotFound)
 	h.fail("modify_contact_group_members", map[string]any{argGroup: "contactGroups/gone", argAdd: []string{c.ResourceName}}, "group not found")
+}
+
+func TestRenameContactGroup(t *testing.T) {
+	t.Parallel()
+
+	const newName = "Angels"
+
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{
+		{ResourceName: testGroupResourceName, Name: testGroupName, Type: contacts.GroupTypeUser, MemberCount: 2},
+		{ResourceName: testSystemGroupStarred, Name: "Starred", Type: contacts.GroupTypeSystem},
+	})
+
+	var renamed GroupOutput
+	h.ok(toolRenameContactGroup, map[string]any{argGroup: testGroupNameLower, argName: newName}, &renamed)
+
+	if renamed.ResourceName != testGroupResourceName || renamed.Name != newName || renamed.MemberCount != 2 {
+		t.Errorf("renamed = %+v", renamed)
+	}
+
+	h.ok(toolRenameContactGroup, map[string]any{argGroup: testGroupResourceName, argName: testGroupName}, &renamed)
+
+	if renamed.Name != testGroupName {
+		t.Errorf("renamed by resource name = %+v", renamed)
+	}
+
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testSystemGroupStarred, argName: newName}, "system groups cannot be renamed or deleted")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testUnknownGroup, argName: newName}, `group "nope" not found`)
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupName, argName: " "}, "name is required")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: "", argName: newName}, "group is required")
+	h.fail(toolRenameContactGroup, map[string]any{argGroup: testBadGroupResourceName, argName: newName},
+		`group resource name must look like "contactGroups/abc"`)
+
+	googleErrs := map[error]string{
+		contacts.ErrNotFound:       "group not found",
+		contacts.ErrConflict:       "group changed, retry",
+		contacts.ErrGroupNameTaken: "a group with this name already exists",
+	}
+	for err, want := range googleErrs {
+		h.people.setErr("RenameGroup", fmt.Errorf("people rename group: %w", err))
+		h.fail(toolRenameContactGroup, map[string]any{argGroup: testGroupResourceName, argName: newName}, want)
+	}
+}
+
+func TestDeleteContactGroup(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.people.setGroups([]contacts.Group{
+		{ResourceName: testGroupResourceName, Name: testGroupName, Type: contacts.GroupTypeUser, MemberCount: 1},
+		{ResourceName: "contactGroups/old", Name: "Old", Type: contacts.GroupTypeUser, MemberCount: 1},
+		{ResourceName: testSystemGroupStarred, Name: "Starred", Type: contacts.GroupTypeSystem},
+	})
+	kept := h.people.put(contacts.Contact{GivenName: testGivenName, Groups: []string{testGroupResourceName}})
+	gone := h.people.put(contacts.Contact{GivenName: testFamilyName, Groups: []string{"contactGroups/old"}})
+
+	var out DeleteGroupOutput
+	h.ok(toolDeleteContactGroup, map[string]any{argGroup: testGroupNameLower}, &out)
+
+	if out.ResourceName != testGroupResourceName || out.Name != testGroupName || out.MemberCount != 1 || out.ContactsDeleted {
+		t.Errorf("delete keeping members = %+v", out)
+	}
+
+	if c, ok := h.people.lookup(kept.ResourceName); !ok || slices.Contains(c.Groups, testGroupResourceName) {
+		t.Errorf("kept member = %+v (found %v), want it kept without the group", c, ok)
+	}
+
+	h.ok(toolDeleteContactGroup, map[string]any{argGroup: "contactGroups/old", "delete_contacts": true}, &out)
+
+	if !out.ContactsDeleted {
+		t.Errorf("delete with members = %+v, want contacts_deleted", out)
+	}
+
+	if _, ok := h.people.lookup(gone.ResourceName); ok {
+		t.Error("member of a group deleted with delete_contacts is still stored")
+	}
+
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testSystemGroupStarred}, "system groups cannot be renamed or deleted")
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testUnknownGroup}, `group "nope" not found`)
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: " "}, "group is required")
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: testBadGroupResourceName}, `group resource name must look like "contactGroups/abc"`)
+
+	h.people.setErr("DeleteGroup", fmt.Errorf("people delete group: %w", contacts.ErrNotFound))
+	h.fail(toolDeleteContactGroup, map[string]any{argGroup: "contactGroups/gone"}, "group not found")
 }
 
 func TestToolErrorsHideUnknownCauses(t *testing.T) {
@@ -1055,15 +1234,18 @@ func TestToolAnnotations(t *testing.T) {
 	}
 
 	reads := []string{toolSearchContacts, "list_contacts", "get_contact", "list_contact_groups"}
-	writes := []string{"create_contact", "update_contact", "upsert_contact_by_email", toolCreateContactGroup, "modify_contact_group_members"}
+	writes := []string{
+		"create_contact", "update_contact", "upsert_contact_by_email",
+		toolCreateContactGroup, toolRenameContactGroup, "modify_contact_group_members",
+	}
 
 	got := map[string]*mcp.Tool{}
 	for _, tool := range res.Tools {
 		got[tool.Name] = tool
 	}
 
-	if len(got) != len(reads)+len(writes)+1 {
-		t.Errorf("tools = %d, want %d", len(got), len(reads)+len(writes)+1)
+	if want := len(reads) + len(writes) + len(destructiveTools); len(got) != want {
+		t.Errorf("tools = %d, want %d", len(got), want)
 	}
 
 	checkReadAnnotations(t, got, reads)
@@ -1126,13 +1308,18 @@ func checkWriteAnnotations(t *testing.T, got map[string]*mcp.Tool, names []strin
 }
 
 // checkDeleteAnnotations requires the destructive hint on delete_contact.
+// destructiveTools are the tools clients must confirm before running.
+var destructiveTools = []string{"delete_contact", toolDeleteContactGroup}
+
 func checkDeleteAnnotations(t *testing.T, got map[string]*mcp.Tool) {
 	t.Helper()
 
-	del := got["delete_contact"]
-	if del == nil || del.Annotations == nil || del.Annotations.ReadOnlyHint ||
-		del.Annotations.DestructiveHint == nil || !*del.Annotations.DestructiveHint {
-		t.Error("delete_contact: want destructiveHint true")
+	for _, name := range destructiveTools {
+		del := got[name]
+		if del == nil || del.Annotations == nil || del.Annotations.ReadOnlyHint ||
+			del.Annotations.DestructiveHint == nil || !*del.Annotations.DestructiveHint {
+			t.Errorf("%s: want destructiveHint true", name)
+		}
 	}
 }
 
@@ -1164,7 +1351,7 @@ func TestCheckGroup(t *testing.T) {
 		}
 	}
 
-	for _, g := range []string{"contactGroups/", "contactGroups/../x", "contactGroups/a?b=1", "contactGroups/a/members", "contactGroups/a b"} {
+	for _, g := range []string{"contactGroups/", testBadGroupResourceName, "contactGroups/a?b=1", "contactGroups/a/members", "contactGroups/a b"} {
 		if err := checkGroup(g); err == nil {
 			t.Errorf("checkGroup(%q) = nil, want an error", g)
 		}
@@ -1184,7 +1371,7 @@ func TestResourceNames_RejectedBeforeGoogle(t *testing.T) {
 	}
 
 	wantGroup := `group resource name must look like "contactGroups/abc"`
-	h.fail("modify_contact_group_members", map[string]any{argGroup: "contactGroups/../x", argAdd: []string{testResourceName}}, wantGroup)
+	h.fail("modify_contact_group_members", map[string]any{argGroup: testBadGroupResourceName, argAdd: []string{testResourceName}}, wantGroup)
 	h.fail("create_contact", map[string]any{argGivenName: "A", "groups": []string{"contactGroups/a?b=1"}}, wantGroup)
 	h.fail("upsert_contact_by_email", map[string]any{argEmail: "a@x.io", argGroup: "contactGroups/a/b"}, wantGroup)
 

@@ -374,6 +374,10 @@ func mapError(err error, notFound string) error {
 		return newToolError(msgUpstreamAuth)
 	case errors.Is(err, contacts.ErrConflict):
 		return newToolError(contacts.ErrConflict.Error())
+	case errors.Is(err, contacts.ErrSystemGroup):
+		return newToolError(contacts.ErrSystemGroup.Error())
+	case errors.Is(err, contacts.ErrGroupNameTaken):
+		return newToolError(contacts.ErrGroupNameTaken.Error())
 	case errors.Is(err, contacts.ErrNotFound):
 		return newToolError(notFound)
 	case errors.Is(err, contacts.ErrInvalidArgument):

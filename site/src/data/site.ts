@@ -57,6 +57,8 @@ export const TOOLS: readonly Tool[] = [
   { name: 'delete_contact', summary: 'Delete a contact for good.', group: 'write' },
   { name: 'list_contact_groups', summary: 'See your labels.', group: 'label' },
   { name: 'create_contact_group', summary: 'Create a label.', group: 'label' },
+  { name: 'rename_contact_group', summary: 'Rename one of your labels.', group: 'label' },
+  { name: 'delete_contact_group', summary: 'Delete a label. Its contacts stay unless you ask.', group: 'label' },
   { name: 'modify_contact_group_members', summary: 'Add contacts to a label, or remove them.', group: 'label' },
 ];
 
@@ -115,7 +117,7 @@ export const FAQ: readonly FaqEntry[] = [
   {
     question: 'Can it delete contacts?',
     answer:
-      'Yes. The delete_contact tool deletes a contact permanently, and the server flags it as destructive. Tools that only read are flagged as read-only. The upsert_contact_by_email tool never overwrites a value.',
+      'Yes. The delete_contact tool deletes a contact permanently, and the server flags it as destructive. The delete_contact_group tool, also flagged as destructive, deletes a label and keeps its contacts unless you ask to delete them too. Tools that only read are flagged as read-only. The upsert_contact_by_email tool never overwrites a value.',
   },
   {
     question: 'How do I disconnect and erase my data?',

@@ -203,7 +203,7 @@ func TestListContacts_GroupErrors(t *testing.T) {
 		want string
 	}{
 		{"unknown group name", map[string]any{argGroup: "Nope"}, `group "Nope" not found`},
-		{"malformed group resource name", map[string]any{argGroup: "contactGroups/../x"}, `group resource name must look like "contactGroups/abc"`},
+		{"malformed group resource name", map[string]any{argGroup: testBadGroupResourceName}, `group resource name must look like "contactGroups/abc"`},
 		{"group token without group", map[string]any{argPageToken: token}, msgInvalidPageToken},
 		{"group token for another group", map[string]any{argGroup: testOtherGroup, argPageToken: token}, msgInvalidPageToken},
 		{"group token with another sort", map[string]any{argGroup: testClientsGroup, argSort: sortFirstName, argPageToken: token}, msgInvalidPageToken},

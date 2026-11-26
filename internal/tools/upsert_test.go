@@ -190,7 +190,7 @@ func TestUpsert_GroupAdded(t *testing.T) {
 
 	// An unknown group fails before any write.
 	writes := h.people.writes()
-	h.fail("upsert_contact_by_email", map[string]any{argEmail: "other@x.io", argGroup: "nope"}, `group "nope" not found`)
+	h.fail("upsert_contact_by_email", map[string]any{argEmail: "other@x.io", argGroup: testUnknownGroup}, `group "nope" not found`)
 
 	if h.people.writes() != writes {
 		t.Error("wrote despite an unknown group")

@@ -28,6 +28,8 @@
 | `delete_contact`               | Deletes a contact.                                                                                                                             |
 | `list_contact_groups`          | Lists your contact groups (labels) and Google's system groups.                                                                                 |
 | `create_contact_group`         | Creates a contact group.                                                                                                                       |
+| `rename_contact_group`         | Renames one of your contact groups (`group`, `name`). System groups cannot be renamed.                                                         |
+| `delete_contact_group`         | Deletes one of your contact groups (`group`). Members stay unless `delete_contacts` is true. System groups cannot be deleted.                  |
 | `modify_contact_group_members` | Adds contacts to, or removes them from, a group.                                                                                               |
 
 `upsert_contact_by_email` returns `created`, `enriched`, `unchanged` or `ambiguous`. When several contacts share the e-mail, it changes nothing and returns the candidates so you can choose.

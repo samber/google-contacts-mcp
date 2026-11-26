@@ -142,6 +142,8 @@ func TestErrorMapping(t *testing.T) {
 		{name: "503 create not retried", route: routeCreate, code: 503, status: "UNAVAILABLE", call: createOne, wantHits: 1},
 		{name: "400 other update", route: routeUpdate, code: 400, status: "INVALID_ARGUMENT", call: updateC1, wantHits: 1},
 		{name: "400 bad page token list", route: routeList, code: 400, status: "INVALID_ARGUMENT", call: listBadToken, wantIs: contacts.ErrInvalidArgument, wantHits: 1},
+		{name: "409 create group", route: routeCreateGroup, code: 409, status: "ALREADY_EXISTS", call: createGroupOne, wantIs: contacts.ErrGroupNameTaken, wantHits: 1},
+		{name: "404 rename group", route: routeGetGroup, code: 404, status: "NOT_FOUND", call: renameGroupOne, wantIs: contacts.ErrNotFound, wantHits: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,6 +183,16 @@ func updateC1(p contacts.People) error {
 	c := contacts.FromPerson(testPerson("people/c1", "e1"))
 	_, err := p.Update(context.Background(), c, []string{contacts.FieldNames})
 
+	return err
+}
+
+func createGroupOne(p contacts.People) error {
+	_, err := p.CreateGroup(context.Background(), testGroupFriendsClub)
+	return err
+}
+
+func renameGroupOne(p contacts.People) error {
+	_, err := p.RenameGroup(context.Background(), testGroupResourceName, testGroupFriendsClub)
 	return err
 }
 
@@ -358,7 +370,7 @@ func TestListAndCreateGroups(t *testing.T) {
 	ctx := context.Background()
 
 	env.fake.groups = []*people.ContactGroup{
-		{ResourceName: "contactGroups/1", Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser, MemberCount: 3},
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser, MemberCount: 3},
 		{ResourceName: "contactGroups/myContacts", Name: "myContacts", FormattedName: "My Contacts", GroupType: "SYSTEM_CONTACT_GROUP"},
 	}
 
@@ -368,7 +380,7 @@ func TestListAndCreateGroups(t *testing.T) {
 	}
 
 	want := []contacts.Group{
-		{ResourceName: "contactGroups/1", Name: testGroupFriendsClub, Type: contacts.GroupTypeUser, MemberCount: 3},
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, Type: contacts.GroupTypeUser, MemberCount: 3},
 		{ResourceName: "contactGroups/myContacts", Name: "My Contacts", Type: contacts.GroupTypeSystem},
 	}
 	if len(groups) != len(want) || groups[0] != want[0] || groups[1] != want[1] {
@@ -382,6 +394,126 @@ func TestListAndCreateGroups(t *testing.T) {
 
 	if g.ResourceName != "contactGroups/new" || g.Name != "Investors" || g.Type != contacts.GroupTypeUser {
 		t.Errorf("CreateGroup = %+v", g)
+	}
+}
+
+func TestRenameGroup(t *testing.T) {
+	t.Parallel()
+
+	const newName = "Book Club"
+
+	env := newTestEnv(t)
+	env.fake.groups = []*people.ContactGroup{
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser},
+		{ResourceName: "contactGroups/starred", Name: "starred", FormattedName: "Starred", GroupType: googleGroupSystem},
+	}
+	p := env.people(t)
+	ctx := context.Background()
+
+	g, err := p.RenameGroup(ctx, "friends club", newName)
+	if err != nil {
+		t.Fatalf("RenameGroup: %v", err)
+	}
+
+	if g.ResourceName != testGroupResourceName || g.Name != newName || g.Type != contacts.GroupTypeUser {
+		t.Errorf("RenameGroup = %+v", g)
+	}
+
+	assertRenameSent(t, env, newName)
+
+	if _, err := p.RenameGroup(ctx, "contactGroups/starred", newName); !errors.Is(err, contacts.ErrSystemGroup) {
+		t.Errorf("rename system group: err = %v, want ErrSystemGroup", err)
+	}
+
+	if n := env.fake.count(routeUpdateGroup); n != 1 {
+		t.Errorf("update calls = %d, want 1: a system group must not reach Google", n)
+	}
+}
+
+func TestDeleteGroup(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.fake.groups = []*people.ContactGroup{
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser, MemberCount: 3},
+		{ResourceName: "contactGroups/starred", Name: "starred", FormattedName: "Starred", GroupType: googleGroupSystem},
+	}
+	p := env.people(t)
+	ctx := context.Background()
+
+	for _, deleteContacts := range []bool{false, true} {
+		g, err := p.DeleteGroup(ctx, "friends club", deleteContacts)
+		if err != nil {
+			t.Fatalf("DeleteGroup(%v): %v", deleteContacts, err)
+		}
+
+		if g.ResourceName != testGroupResourceName || g.Name != testGroupFriendsClub || g.MemberCount != 3 {
+			t.Errorf("DeleteGroup(%v) = %+v, want the group as read before deletion", deleteContacts, g)
+		}
+
+		query, _, _, path := env.fake.last(routeDeleteGroup)
+		if v, _ := url.ParseQuery(query); path != groupsPath+"/1" || v.Get("deleteContacts") != strconv.FormatBool(deleteContacts) {
+			t.Errorf("delete request = %s?%s, want deleteContacts=%v", path, query, deleteContacts)
+		}
+	}
+
+	if _, err := p.DeleteGroup(ctx, "contactGroups/starred", false); !errors.Is(err, contacts.ErrSystemGroup) {
+		t.Errorf("delete system group: err = %v, want ErrSystemGroup", err)
+	}
+
+	if _, err := p.DeleteGroup(ctx, "contactGroups/gone", false); !errors.Is(err, contacts.ErrNotFound) {
+		t.Errorf("delete missing group: err = %v, want ErrNotFound", err)
+	}
+
+	if n := env.fake.count(routeDeleteGroup); n != 2 {
+		t.Errorf("delete calls = %d, want 2: system and missing groups must not reach the delete", n)
+	}
+}
+
+// assertRenameSent checks the last group read and the update that followed:
+// path, new name, the read's etag and the field masks.
+func assertRenameSent(t *testing.T, env *testEnv, newName string) {
+	t.Helper()
+
+	if query, _, _, _ := env.fake.last(routeGetGroup); !strings.Contains(query, "groupFields=") {
+		t.Errorf("get group query = %q, want groupFields", query)
+	}
+
+	_, body, _, path := env.fake.last(routeUpdateGroup)
+	if path != groupsPath+"/1" {
+		t.Errorf("update path = %q", path)
+	}
+
+	var req people.UpdateContactGroupRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if req.ContactGroup == nil || req.ContactGroup.Name != newName || req.ContactGroup.Etag != testGroupEtag ||
+		req.UpdateGroupFields != groupNameField || req.ReadGroupFields != groupFields {
+		t.Errorf("update body = %s", body)
+	}
+}
+
+func TestRenameGroup_NameTaken(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.fake.groups = []*people.ContactGroup{
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser},
+	}
+	env.fake.override = func(w http.ResponseWriter, _ *http.Request, rt string) bool {
+		if rt != routeUpdateGroup {
+			return false
+		}
+
+		googleError(w, http.StatusConflict, "ALREADY_EXISTS")
+
+		return true
+	}
+
+	if err := renameGroupOne(env.people(t)); !errors.Is(err, contacts.ErrGroupNameTaken) {
+		t.Errorf("err = %v, want ErrGroupNameTaken", err)
 	}
 }
 
@@ -431,7 +563,7 @@ func TestModifyMembers_ByName(t *testing.T) {
 	t.Parallel()
 
 	groups := []*people.ContactGroup{
-		{ResourceName: "contactGroups/1", Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser},
+		{ResourceName: testGroupResourceName, Name: testGroupFriendsClub, FormattedName: testGroupFriendsClub, GroupType: googleGroupUser},
 		{ResourceName: "contactGroups/friends", Name: "friends", FormattedName: "Friends", GroupType: "SYSTEM_CONTACT_GROUP"},
 		{ResourceName: "contactGroups/2", Name: "Dup", FormattedName: "Dup", GroupType: googleGroupUser},
 		{ResourceName: "contactGroups/3", Name: "dup", FormattedName: "dup", GroupType: googleGroupUser},
@@ -476,7 +608,7 @@ func TestModifyMembers_ReportsNotFoundMembers(t *testing.T) {
 		return true
 	}
 
-	err := env.people(t).ModifyMembers(context.Background(), "contactGroups/1", []string{testContactA}, nil)
+	err := env.people(t).ModifyMembers(context.Background(), testGroupResourceName, []string{testContactA}, nil)
 	if !errors.Is(err, contacts.ErrNotFound) || !strings.Contains(err.Error(), testContactA) {
 		t.Errorf("err = %v, want ErrNotFound naming people/a", err)
 	}

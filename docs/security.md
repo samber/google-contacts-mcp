@@ -8,6 +8,6 @@
 - Tools accept only `people/c<digits>` contact names and `contactGroups/<id>` group names, so no argument can reach another People API resource.
 - The consent page shows the client's name and the host it will redirect you to, so a malicious client cannot pass itself off as Claude without you seeing where you will land.
 - Logs never contain tokens, codes, secrets or Google responses. Metrics carry no user or client identifiers and sit behind basic authentication.
-- Write tools change your real address book. Clients see `delete_contact` flagged as destructive and the read tools flagged as read-only.
+- Write tools change your real address book. Clients see `delete_contact` and `delete_contact_group` flagged as destructive and the read tools flagged as read-only.
 
 Please report vulnerabilities privately through the repository's **Security** tab, not in a public issue.

@@ -91,6 +91,8 @@ type People interface {
 	Delete(ctx context.Context, resourceName string) error
 	ListGroups(ctx context.Context) ([]Group, error)
 	CreateGroup(ctx context.Context, name string) (Group, error)
+	RenameGroup(ctx context.Context, group, name string) (Group, error)                // group: resource name or user group name
+	DeleteGroup(ctx context.Context, group string, deleteContacts bool) (Group, error) // returns the group as it was
 	ModifyMembers(ctx context.Context, group string, add, remove []string) error
 }
 
